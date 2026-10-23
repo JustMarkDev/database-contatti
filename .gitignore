@@ -36,5 +36,5 @@ opencode.local.json
 .pi/
 .vitest/
 
-# private contact corpus (JustMarkDev/database-contatti-corpus), cloned locally
+# private contact corpus with real data, kept only locally
 /data/

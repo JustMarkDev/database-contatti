@@ -44,9 +44,8 @@ i server destinatari vedono l'indirizzo IP, l'hostname EHLO e il mittente
 envelope configurati.
 
 I file sorgente possono contenere dati personali. Il corpus di compatibilità
-contiene contatti reali e non fa parte di questo repository: si trova in un
-repository privato che i manutentori clonano in `data/email/` (cartella ignorata
-da Git). Senza corpus i test che lo leggono vengono saltati; benchmark e
+contiene contatti reali e non fa parte di questo repository: i manutentori lo
+tengono solo in locale in `data/email/` (cartella ignorata da Git). Senza corpus i test che lo leggono vengono saltati; benchmark e
 `bun run test:corpus` lo richiedono. Non aggiungere al repository dati di
 contatto reali, esportazioni, database, backup o log. Per nuovi esempi e fixture
 usare dati sintetici, per esempio `utente@example.test`.
