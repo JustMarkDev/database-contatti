@@ -253,7 +253,9 @@ fn extract_database(source_path: &Path, target: &Path) -> Result<(), String> {
     let mut target_index = 0;
     for i in 0..archive.len() {
         if let Ok(file) = archive.by_index(i) {
-            let name = file.name().to_lowercase();
+            // zip 9: names that are not valid UTF-8 are errors; such entries cannot be the database.
+            let Ok(name) = file.name() else { continue };
+            let name = name.to_lowercase();
             if name == "contatti.sqlite3" || name.ends_with("/contatti.sqlite3") {
                 target_index = i;
                 break;
