@@ -59,7 +59,7 @@ No taxonomy IDs exposed. Category/subcategory remain internal mapping.
 - Schema changes as versioned, transactional, idempotent migrations. Fresh DB + upgrade covered. Never touch `PRAGMA user_version` manually.
 - Keep list paginated (100 rows), exports streaming, stale-async guards.
 - Blacklist atomic: insert + candidate suppression + exportable projection in one transaction. PEC filtered at export, not deleted. Manual removals = opt-out list for now.
-- `data/email/` is the private corpus clone (gitignored), never committed nor copied into `src/`, `public/`, `src-tauri/`. New tests use `utente@example.test`.
+- `data/email/` is the local-only private corpus (gitignored), never committed nor copied into `src/`, `public/`, `src-tauri/`. New tests use `utente@example.test`.
 - Narrowest capability rule for any new native network/file access, with test for that path.
 
 ## 8. Open questions for implementation discussion — decisions 2026-09-22
