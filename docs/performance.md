@@ -13,7 +13,7 @@ bun run test:performance
 Requirements:
 
 - Bun and a Rust toolchain
-- the private compatibility corpus cloned into `data/email/` (includes the
+- the private compatibility corpus, kept locally in `data/email/` (includes the
   25 MB and 4.3 MB Comuni fixtures; maintainers only, it holds real contacts)
 - compare runs on the same machine and the same `--release` build
 

@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
-// The corpus holds real contacts: it lives in a private repo, cloned into `data/email`.
+// The corpus holds real contacts: it is kept only locally in `data/email`, never committed.
 fn corpus_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../data/email")
 }
