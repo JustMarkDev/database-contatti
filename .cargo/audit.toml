@@ -1,0 +1,49 @@
+# Database Contatti supports Windows and macOS only. Cargo still resolves
+# Tauri's Linux-only GTK3 dependency graph into the shared lockfile, so
+# cargo-audit sees those crates even though the compiler rejects Linux builds.
+# These exceptions are limited to that unreachable GTK3 graph. Review them
+# whenever Tauri changes its Linux backend. Owner: Database Contatti
+# maintainers. Review/expiry: 2027-02-28.
+#
+# Tauri 2.11's platform-independent `tauri-utils -> urlpattern` chain also
+# retains the unmaintained rust-unic crates. These are informational
+# maintenance notices, not known vulnerabilities. Keep the exceptions narrow
+# and remove them when Tauri/urlpattern migrates to a maintained Unicode
+# implementation. Review/expiry: 2027-02-28.
+#
+# The two quick-xml exceptions are retained for the transitive version used by
+# calamine. The importer does not expose remote XML input. Review/expiry:
+# 2026-12-31.
+# The three zip advisories (2026-0367..0369) concern `ZipArchive::extract` and
+# `ZipStreamReader::extract`. calamine 0.36 pins zip 8.6 and only reads single
+# entries; the app never extracts archives to disk. Drop them when calamine moves
+# to zip 9. Review/expiry: 2026-12-31.
+[advisories]
+ignore = [
+  # Unsupported Linux-only GTK3 stack.
+  "RUSTSEC-2024-0411",
+  "RUSTSEC-2024-0412",
+  "RUSTSEC-2024-0413",
+  "RUSTSEC-2024-0414",
+  "RUSTSEC-2024-0415",
+  "RUSTSEC-2024-0416",
+  "RUSTSEC-2024-0417",
+  "RUSTSEC-2024-0418",
+  "RUSTSEC-2024-0419",
+  "RUSTSEC-2024-0420",
+  "RUSTSEC-2024-0429",
+  "RUSTSEC-2024-0370",
+  # Tauri/urlpattern rust-unic maintenance notices.
+  "RUSTSEC-2025-0075",
+  "RUSTSEC-2025-0080",
+  "RUSTSEC-2025-0081",
+  "RUSTSEC-2025-0098",
+  "RUSTSEC-2025-0100",
+  # Transitive calamine/quick-xml advisories.
+  "RUSTSEC-2026-0194",
+  "RUSTSEC-2026-0195",
+  # zip `extract()` is never called (see above).
+  "RUSTSEC-2026-0367",
+  "RUSTSEC-2026-0368",
+  "RUSTSEC-2026-0369",
+]

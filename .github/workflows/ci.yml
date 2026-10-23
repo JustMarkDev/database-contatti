@@ -1,0 +1,137 @@
+name: CI
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+  pull-requests: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  detect-changed-areas:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      frontend: ${{ steps.filter.outputs.frontend }}
+      native: ${{ steps.filter.outputs.native }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: dorny/paths-filter@ceb8a2b8f2d89434be7ff52d3de7ec3738c5cc9d # v4.0.3
+        id: filter
+        with:
+          filters: |
+            frontend:
+              - 'src/**'
+              - 'public/**'
+              - 'index.html'
+              - 'package.json'
+              - 'bun.lock'
+              - 'tsconfig*.json'
+              - 'vite.config.ts'
+              - 'src-tauri/tauri.conf.json'
+              - '.github/workflows/**'
+            native:
+              - 'src-tauri/**'
+              - 'package.json'
+              - 'bun.lock'
+              - '.github/workflows/**'
+
+  frontend-checks:
+    name: Frontend checks
+    needs: detect-changed-areas
+    if: needs.detect-changed-areas.outputs.frontend == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Check
+        run: bun run check:js
+      - name: Test frontend
+        run: bun run test:js
+      - name: Build frontend
+        run: bun run build
+      - name: Audit Bun dependencies
+        run: bun audit
+
+  native-checks:
+    name: Rust and Tauri checks
+    needs: detect-changed-areas
+    if: needs.detect-changed-areas.outputs.native == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - windows-latest
+          - macos-15-intel
+          - macos-latest
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+      - uses: dtolnay/rust-toolchain@b725eda525362e7cf34af9a7243cac1e3f01a7ec # stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: src-tauri
+      - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
+        with:
+          tool: cargo-audit,cargo-nextest
+      - name: Install locked dependencies
+        run: bun install --frozen-lockfile
+      - name: Check Rust
+        run: bun run check:rust
+      - name: Test Rust backend
+        run: bun run test:rust
+      - name: Audit Cargo dependencies
+        run: cargo audit --file src-tauri/Cargo.lock --target-os macos --target-os windows
+
+  final-required-gate:
+    name: CI
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - detect-changed-areas
+      - frontend-checks
+      - native-checks
+    env:
+      DETECT_RESULT: ${{ needs.detect-changed-areas.result }}
+      FRONTEND_CHANGED: ${{ needs.detect-changed-areas.outputs.frontend }}
+      FRONTEND_RESULT: ${{ needs.frontend-checks.result }}
+      NATIVE_CHANGED: ${{ needs.detect-changed-areas.outputs.native }}
+      NATIVE_RESULT: ${{ needs.native-checks.result }}
+    steps:
+      - name: Verify required job states
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$DETECT_RESULT" = "success"
+
+          if [[ "$FRONTEND_CHANGED" == "true" ]]; then
+            test "$FRONTEND_RESULT" = "success"
+          else
+            test "$FRONTEND_RESULT" = "skipped"
+          fi
+
+          if [[ "$NATIVE_CHANGED" == "true" ]]; then
+            test "$NATIVE_RESULT" = "success"
+          else
+            test "$NATIVE_RESULT" = "skipped"
+          fi

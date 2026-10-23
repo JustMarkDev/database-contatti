@@ -1,0 +1,1575 @@
+@import "tailwindcss";
+@import "tw-animate-css";
+
+@theme inline {
+  --font-sans: var(--font-ui);
+  --font-mono: var(--font-code);
+  --color-background: var(--bg);
+  --color-foreground: var(--text);
+  --color-card: var(--surface);
+  --color-card-foreground: var(--text);
+  --color-popover: var(--surface-2);
+  --color-popover-foreground: var(--text);
+  --color-primary: var(--primary);
+  --color-primary-hover: var(--primary-hover);
+  --color-brand: var(--brand);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--surface-2);
+  --color-secondary-foreground: var(--text);
+  --color-muted: var(--surface-2);
+  --color-muted-foreground: var(--muted);
+  --color-faint: var(--faint);
+  --color-accent: var(--surface-3);
+  --color-accent-foreground: var(--text);
+  --color-destructive: var(--danger);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+  --color-border: var(--border);
+  --color-border-soft: var(--border-soft);
+  --color-border-strong: var(--border-strong);
+  --color-input: var(--border);
+  --color-field: var(--field);
+  --color-ring: var(--brand);
+  --color-sidebar: var(--bg);
+  --color-sidebar-foreground: var(--text);
+  --color-sidebar-accent: var(--surface-3);
+  --color-sidebar-accent-foreground: var(--text);
+  --color-sidebar-border: var(--border-soft);
+  --color-sidebar-ring: var(--brand);
+}
+
+/* Design tokens. One neutral ramp, monochrome primary actions, one accent (mint,
+   carried over from the original brand) for focus, selection and progress, plus
+   amber/red for warning and danger. No glows, no gradients.
+   Surfaces step up in lightness: bg (window) < field < panel < surface < surface-2 < surface-3.
+   Radius rule: controls 8px, containers 12px, badges 6px. */
+:root {
+  color-scheme: dark;
+  color: #ededf0;
+  background: #0c0d0f;
+  --font-ui:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI Variable Text", "Segoe UI",
+    "Helvetica Neue", system-ui, sans-serif;
+  --font-code: ui-monospace, "SF Mono", "Cascadia Code", Menlo, Consolas, monospace;
+  font-family: var(--font-ui);
+  font-weight: 400;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  --bg: #0c0d0f;
+  --field: #0f1012;
+  --panel: #121316;
+  --surface: #17181b;
+  --surface-2: #1c1d21;
+  --surface-3: #25262b;
+  --border: #2a2b31;
+  --border-soft: #1f2024;
+  --border-strong: #3a3c43;
+  --text: #ededf0;
+  --muted: #9d9fa8;
+  --faint: #6b6d76;
+  --primary: #e6e6e9;
+  --primary-hover: #f4f4f6;
+  --primary-foreground: #121316;
+  --brand: #7fd4af;
+  --success: #7fd4af;
+  --warning: #f0b847;
+  --danger: #ff6b70;
+  --space-1: 6px;
+  --space-2: 10px;
+  --space-3: 12px;
+  --space-4: 20px;
+  --space-5: 28px;
+  --titlebar-height: 44px;
+  /* Keep in sync with tauri.conf.json trafficLightPosition */
+  --traffic-lights-x: 16px;
+  --traffic-lights-y: 18px;
+  /* AppKit standard window buttons: 14px frames, 23px origin-to-origin pitch */
+  --traffic-lights-button: 14px;
+  --traffic-lights-pitch: 23px;
+  /* tao insets the cluster so the button frames start at (x, y - 9px) */
+  --traffic-lights-center-y: calc(var(--traffic-lights-y) - 2px);
+  --traffic-lights-end-x: calc(
+    var(--traffic-lights-x) + var(--traffic-lights-pitch) * 2 + var(--traffic-lights-button)
+  );
+  --titlebar-toggle-size: 22px;
+  --titlebar-toggle-gap: 6px;
+  --sidebar-island-inset: 10px;
+  --sidebar-island-inset-top: var(--sidebar-island-inset);
+  --sidebar-island-gap: 4px;
+  --sidebar-island-radius: 12px;
+  --app-title-size: 1.375rem;
+  --shadow-panel: 0 0 0 1px rgb(0 0 0 / 0.4), 0 12px 40px -12px rgb(0 0 0 / 0.6);
+}
+
+/* The island has to start below the native traffic lights, which overlay the webview. */
+:root[data-window-chrome="mac-overlay"] {
+  --sidebar-island-inset-top: var(--titlebar-height);
+}
+
+@layer components {
+  * {
+    box-sizing: border-box;
+  }
+  * {
+    scrollbar-width: none;
+  }
+  *::-webkit-scrollbar {
+    display: none;
+  }
+  ::selection {
+    background: rgb(127 212 175 / 0.3);
+  }
+  /* App shell: the document never scrolls, so fixed chrome cannot rubber-band. */
+  html,
+  body {
+    height: 100%;
+    min-width: 320px;
+    overflow: hidden;
+    overscroll-behavior: none;
+    background: var(--bg);
+  }
+  /* Desktop app: labels, buttons and chrome are not selectable, so a click
+     that moves a pixel while the page switches cannot select the whole new
+     page. Data stays copyable: fields, table cells, details, messages. */
+  body {
+    margin: 0;
+    font-size: 14px;
+    -webkit-user-select: none;
+    user-select: none;
+  }
+  input,
+  textarea,
+  [contenteditable],
+  td,
+  dd,
+  pre,
+  code,
+  [role="alert"],
+  [role="status"],
+  [role="dialog"] {
+    -webkit-user-select: text;
+    user-select: text;
+  }
+  #root {
+    height: 100%;
+    overflow: hidden;
+  }
+  button,
+  input,
+  select {
+    font: inherit;
+  }
+  /* Keep native select chrome (color-scheme: dark handles the closed control),
+     but make sure the text and the option list stay legible on Windows. */
+  select {
+    color: inherit;
+  }
+  select option {
+    color: var(--text);
+    background-color: var(--surface-2);
+  }
+  input[type="checkbox"],
+  input[type="range"] {
+    accent-color: var(--brand);
+  }
+  input[type="range"] {
+    width: min(240px, 100%);
+  }
+
+  /* ---------------------------------------------------------------- sidebar */
+  .brand {
+    position: relative;
+    display: flex;
+    gap: 10px;
+    align-items: center;
+    padding: 6px 8px 14px;
+    color: var(--text);
+  }
+  /* The island already starts below the titlebar, so the brand only needs breathing room. */
+  .brand-overlay {
+    padding-top: 2px;
+  }
+  .brand-mark {
+    display: grid;
+    flex: 0 0 28px;
+    width: 28px;
+    height: 28px;
+    place-items: center;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    color: var(--text);
+    background: var(--surface-2);
+  }
+  .brand-mark .icon {
+    width: 17px;
+    height: 17px;
+    flex-basis: 17px;
+  }
+  .brand strong {
+    display: block;
+    font-size: 0.875rem;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    line-height: 1.2;
+  }
+  .sidebar-status {
+    margin: 0 10px;
+    border-top: 1px solid var(--border-soft);
+    padding-top: 12px;
+    font-size: 0.75rem;
+  }
+  .sidebar-status dl {
+    display: grid;
+    gap: 3px;
+    margin: 0;
+  }
+  .sidebar-status dl > div {
+    display: flex;
+    justify-content: space-between;
+    color: var(--faint);
+  }
+  .sidebar-status dd {
+    margin: 0;
+    color: var(--muted);
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* Stay below the app's z-50 overlay layer (popover/select/tooltip/sheet/
+     alert-dialog/toast) so an open popover paints over the fixed toggle instead
+     of the toggle intercepting clicks inside it. Still above the fixed z-10
+     sidebar island and unpositioned page content. */
+  .window-chrome-layer {
+    position: fixed;
+    inset: 0;
+    z-index: 40;
+    pointer-events: none;
+  }
+  .window-drag-region {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: var(--titlebar-height);
+    pointer-events: auto;
+    -webkit-app-region: drag;
+    app-region: drag;
+  }
+  .window-traffic-toggle {
+    position: absolute;
+    top: calc(var(--traffic-lights-center-y) - var(--titlebar-toggle-size) / 2);
+    left: calc(var(--traffic-lights-end-x) + var(--titlebar-toggle-gap));
+    display: flex;
+    align-items: center;
+    pointer-events: auto;
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+  /* Non-mac / non-overlay (Windows/Linux): the sidebar island and its brand sit
+     at the top-left inset, so pin the toggle to the opposite corner instead of
+     stacking both at the same inset. left:auto cancels the mac-overlay left offset. */
+  :root[data-window-chrome="default"] .window-traffic-toggle,
+  .window-chrome-layer:not(.window-chrome-overlay) .window-traffic-toggle {
+    top: var(--sidebar-island-inset);
+    right: var(--sidebar-island-inset);
+    left: auto;
+  }
+  /* !important defeats the Tailwind size utility that SidebarTrigger applies */
+  .window-traffic-toggle-button {
+    width: var(--titlebar-toggle-size) !important;
+    height: var(--titlebar-toggle-size) !important;
+    min-height: var(--titlebar-toggle-size) !important;
+    border-radius: 6px;
+  }
+  .titlebar-sidebar-trigger,
+  .sidebar-chrome-trigger {
+    -webkit-app-region: no-drag;
+    app-region: no-drag;
+  }
+  .sidebar-chrome-trigger:hover {
+    background: color-mix(in srgb, var(--text) 8%, transparent);
+  }
+  .sidebar-island {
+    box-shadow: none;
+  }
+  .sidebar-copy {
+    min-width: 0;
+  }
+  .icon {
+    width: 18px;
+    height: 18px;
+    flex: 0 0 18px;
+  }
+
+  .mobile-app-bar {
+    display: none;
+  }
+  /* The only vertical scroller in the app. Gutters match the sidebar island insets. */
+  .workspace {
+    display: flex;
+    flex: 1 1 auto;
+    flex-direction: column;
+    min-width: 0;
+    min-height: 0;
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior: none;
+    padding: var(--sidebar-island-inset-top) var(--sidebar-island-inset) var(--sidebar-island-inset)
+      var(--sidebar-island-gap);
+    background: var(--bg);
+  }
+  /* Keep the scroll viewport clear of the overlay titlebar and its drag region.
+     Sidebar island already starts at --titlebar-height, so workspace top padding is 0 here. */
+  :root[data-window-chrome="mac-overlay"] [data-slot="sidebar-inset"] {
+    padding-top: var(--titlebar-height);
+  }
+  :root[data-window-chrome="mac-overlay"] .workspace {
+    padding-top: 0;
+  }
+  :root[data-window-chrome="mac-overlay"] [data-slot="sidebar-inner"] {
+    padding-top: 0;
+  }
+  .page-loading {
+    display: grid;
+    min-height: 220px;
+    place-items: center;
+    color: var(--muted);
+    font-size: 0.8125rem;
+  }
+  .wip-notice {
+    display: grid;
+    flex: 1;
+    place-content: center;
+    gap: 12px;
+    padding: var(--space-4) 20px;
+    text-align: center;
+  }
+  .wip-notice h1 {
+    font-size: clamp(2.5rem, 7vw, 5rem);
+    font-weight: 700;
+    letter-spacing: -0.03em;
+    line-height: 1;
+  }
+  .wip-notice p {
+    color: var(--muted);
+    font-size: 1rem;
+  }
+
+  /* ----------------------------------------------------------- page chrome */
+  .topbar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 16px 20px;
+  }
+  .topbar h1 {
+    margin: 0;
+    color: var(--text);
+    font-size: var(--app-title-size);
+    font-weight: 650;
+    letter-spacing: -0.02em;
+    line-height: 1.2;
+  }
+  .topbar-description {
+    max-width: 68ch;
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+  .header-metrics {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 20px;
+    align-items: center;
+  }
+  .header-metrics > div {
+    display: grid;
+    gap: 1px;
+    text-align: right;
+  }
+  .header-metrics span,
+  .table-toolbar span {
+    color: var(--faint);
+    font-size: 0.75rem;
+  }
+  .header-metrics strong {
+    color: var(--text);
+    font-size: 1.125rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  .ai-panel,
+  .blacklist-panel,
+  .settings-panel,
+  .ai-log-panel,
+  .verification-panel {
+    margin-bottom: var(--space-4);
+  }
+  /* Island section flattening lives outside @layer components, after this block,
+     so it can beat Card's Tailwind utilities. See the unlayered block at the end. */
+  /* One floating island holding the page, matching the sidebar island language.
+     flex: 0 0 auto + min-height fills short pages, but the island must grow with
+     content so .workspace (the only app scroller) can scroll tall pages.
+     flex-grow + overflow:clip would size the island to the viewport and clip. */
+  .content-island {
+    display: flex;
+    flex: 0 0 auto;
+    flex-direction: column;
+    min-width: 0;
+    width: 100%;
+    min-height: calc(100svh - var(--sidebar-island-inset-top) - var(--sidebar-island-inset));
+    margin-bottom: 0;
+    border: 1px solid var(--border-soft);
+    border-radius: var(--sidebar-island-radius);
+    overflow: clip;
+    color: var(--text);
+    background: var(--panel);
+    box-shadow: var(--shadow-panel);
+    font-size: 0.8125rem;
+  }
+  :root[data-window-chrome="mac-overlay"] .content-island {
+    min-height: calc(100svh - var(--titlebar-height) - var(--sidebar-island-inset));
+  }
+  .island-section {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+    min-width: 0;
+    padding: var(--space-4) 20px;
+  }
+  .island-section > .section-heading,
+  .island-section > .search-wide {
+    margin-bottom: 0;
+  }
+  .island-section-header {
+    padding-top: 22px;
+    padding-bottom: 6px;
+  }
+  .island-section-flush {
+    gap: 0;
+    padding: 0;
+  }
+  .island-section-flush .contacts-table-wrap {
+    max-height: max(320px, calc(100svh - 330px));
+  }
+  .island-section-flush .table-toolbar {
+    border-top: 1px solid var(--border-soft);
+    border-bottom: 0;
+  }
+  .section-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--space-5);
+    align-items: flex-start;
+    margin-bottom: 0;
+  }
+  .section-heading > * {
+    min-width: 0;
+    max-width: 100%;
+  }
+  .section-heading-row {
+    flex-direction: row !important;
+    align-items: center !important;
+  }
+  .section-heading h2 {
+    margin: 0;
+    color: var(--text);
+    font-size: 0.875rem;
+    font-weight: 600;
+    letter-spacing: -0.005em;
+  }
+  .section-heading p {
+    max-width: 68ch;
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+  .actions-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    align-items: center;
+  }
+  .field-label {
+    display: block;
+    margin: 0 0 6px;
+    color: var(--muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+
+  /* ---------------------------------------------------------- stat strips
+     Numbers sit in one bordered strip; 1px gaps over a border-coloured
+     background draw the dividers, so wrapped rows keep clean hairlines. */
+  .stat-strip,
+  .ai-run-metrics,
+  .verification-outcome-grid,
+  .verification-history-grid {
+    display: grid;
+    gap: 1px;
+    margin: 0;
+    border: 1px solid var(--border-soft);
+    border-radius: 12px;
+    overflow: hidden;
+    background: var(--border-soft);
+  }
+  .stat-strip {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+  .stat {
+    display: grid;
+    gap: 4px;
+    padding: 14px 18px;
+    background: var(--panel);
+  }
+  .stat span {
+    color: var(--muted);
+    font-size: 0.75rem;
+  }
+  .stat strong {
+    color: var(--text);
+    font-size: 1.375rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.02em;
+    line-height: 1.15;
+  }
+
+  /* -------------------------------------------------------- search + filters */
+  .filter-bar-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px;
+    align-items: center;
+  }
+  .search-field {
+    position: relative;
+    flex: 1 1 320px;
+    min-width: 0;
+  }
+  .search-field-icon {
+    position: absolute;
+    top: 50%;
+    left: 11px;
+    width: 16px;
+    height: 16px;
+    color: var(--faint);
+    transform: translateY(-50%);
+    pointer-events: none;
+  }
+  .search-wide {
+    width: 100%;
+  }
+  .advanced-filters-grid {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+  }
+  .multi-filter {
+    position: relative;
+    min-width: 0;
+  }
+  .filter-chip-label {
+    color: var(--muted);
+  }
+  .filter-chip-value {
+    border-left: 1px solid rgb(127 212 175 / 0.3);
+    padding-left: 7px;
+    color: var(--brand);
+    font-variant-numeric: tabular-nums;
+  }
+  .multi-filter[data-active="true"] .filter-chip-label {
+    color: var(--text);
+  }
+  .filter-menu-shell {
+    width: min(290px, calc(100vw - 28px));
+    min-width: 230px;
+    padding: 0;
+  }
+  .filter-menu-scroll-shell {
+    position: relative;
+    max-height: min(280px, calc(100dvh - 160px));
+    overflow: hidden;
+  }
+  .filter-menu {
+    max-height: min(280px, calc(100dvh - 160px));
+    padding: 4px;
+  }
+  .filter-option {
+    display: grid;
+    grid-template-columns: 16px minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+    width: 100%;
+    min-height: 30px;
+    color: var(--muted);
+    text-align: left;
+  }
+  .filter-option.include {
+    color: var(--text);
+  }
+  .filter-option.exclude {
+    color: var(--faint);
+    text-decoration: line-through;
+  }
+  .filter-checkbox {
+    display: grid;
+    width: 16px;
+    height: 16px;
+    place-items: center;
+    border: 1px solid var(--border-strong);
+    border-radius: 5px;
+    color: #fff;
+    background: var(--field);
+    font-size: 0.65rem;
+    font-weight: 800;
+  }
+  .filter-option.include .filter-checkbox {
+    border-color: var(--brand);
+    color: #0f1f18;
+    background: var(--brand);
+  }
+  .filter-option.exclude .filter-checkbox {
+    border-color: rgb(255 107 112 / 0.5);
+    color: var(--danger);
+    background: rgb(255 107 112 / 0.1);
+  }
+  .filter-option-count {
+    color: var(--faint);
+    font-size: 0.6875rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .filter-group {
+    display: grid;
+    gap: 6px;
+    color: var(--muted);
+    font-size: 0.75rem;
+    font-weight: 500;
+  }
+  .filter-group small {
+    color: var(--faint);
+    font-weight: 400;
+  }
+
+  /* ------------------------------------------------------------- tables */
+  .contacts-table-shell {
+    position: relative;
+  }
+  .overlay-scrollbar {
+    position: absolute;
+    z-index: 3;
+    display: none;
+    border-radius: 999px;
+    background: var(--border-strong);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 150ms ease;
+  }
+  .overlay-scrollbar.visible {
+    display: block;
+    opacity: 1;
+  }
+  .overlay-scrollbar.vertical {
+    top: 40px;
+    right: 3px;
+    width: 5px;
+  }
+  .overlay-scrollbar.horizontal {
+    bottom: 3px;
+    left: 4px;
+    height: 5px;
+  }
+  .contacts-table-wrap {
+    max-height: 62vh;
+    overflow: auto;
+    content-visibility: auto;
+    contain-intrinsic-size: 0 800px;
+  }
+  .contacts-table {
+    min-width: 100%;
+    width: max-content;
+    border-collapse: separate;
+    border-spacing: 0;
+  }
+  .contacts-table th::first-letter {
+    text-transform: uppercase;
+  }
+  .contacts-table th {
+    position: sticky;
+    top: 0;
+    z-index: 1;
+    border-bottom: 1px solid var(--border-soft);
+    background: var(--panel);
+  }
+  .sort-header {
+    padding: 0;
+    border: 0;
+    background: none;
+    color: inherit;
+    font: inherit;
+    cursor: pointer;
+  }
+  .sort-header::first-letter {
+    text-transform: uppercase;
+  }
+  .sort-header:hover,
+  .sort-header[data-direction] {
+    color: var(--text);
+  }
+  /* The arrow always takes its space, so sorting never resizes the header. */
+  .sort-header::after {
+    content: " ↑";
+    visibility: hidden;
+  }
+  .sort-header[data-direction]::after {
+    visibility: visible;
+  }
+  .sort-header[data-direction="desc"]::after {
+    content: " ↓";
+  }
+  .contacts-table-fixed {
+    table-layout: fixed;
+  }
+  .contacts-table-fixed td {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .contacts-table th:first-child,
+  .contacts-table td:first-child {
+    padding-left: 20px;
+  }
+  .contacts-table th:last-child,
+  .contacts-table td:last-child {
+    padding-right: 20px;
+  }
+  .contacts-table td {
+    border-bottom: 1px solid var(--border-soft);
+    color: var(--muted);
+  }
+  .contacts-table tbody tr:hover td {
+    background: rgb(255 255 255 / 0.022);
+  }
+  /* Row actions stay reachable at the right edge of wide tables. */
+  .contacts-table .col-actions {
+    position: sticky;
+    right: 0;
+    z-index: 2;
+    background: var(--panel);
+    box-shadow: -1px 0 0 var(--border-soft);
+  }
+  .contacts-table th.col-actions {
+    z-index: 3;
+  }
+  .contacts-table tbody tr:hover td.col-actions {
+    background: color-mix(in srgb, var(--panel) 96%, #fff);
+  }
+  .contacts-table .row-actions {
+    display: flex;
+    gap: 2px;
+    opacity: 0.55;
+    transition: opacity 120ms ease;
+  }
+  .contacts-table tr:hover .row-actions,
+  .contacts-table .row-actions:focus-within {
+    opacity: 1;
+  }
+  .cell-primary {
+    color: var(--text);
+    font-weight: 500;
+  }
+  .cell-num {
+    font-variant-numeric: tabular-nums;
+  }
+  .cell-empty {
+    color: var(--faint);
+  }
+  .cell-warn {
+    color: var(--warning);
+  }
+  .limit-note,
+  .table-status,
+  .table-empty-state {
+    margin: 0;
+    border-top: 1px solid var(--border-soft);
+    padding: 28px 16px;
+    color: var(--faint);
+    font-size: 0.8125rem;
+    text-align: center;
+  }
+  .table-status {
+    padding: 12px 16px;
+    color: var(--brand);
+  }
+  .table-toolbar {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    min-height: 52px;
+    padding: 8px 20px;
+  }
+  .table-toolbar div {
+    display: flex;
+    gap: 10px;
+    align-items: baseline;
+  }
+  .table-toolbar strong {
+    color: var(--text);
+    font-size: 0.8125rem;
+    font-weight: 600;
+  }
+  .table-toolbar .actions-row {
+    align-items: center;
+  }
+  .blacklist-panel .table-toolbar,
+  .verification-panel .table-toolbar {
+    padding: 4px 0 0;
+  }
+  .blacklist-panel .contacts-table-wrap,
+  .verification-panel .contacts-table-wrap {
+    max-height: min(52vh, 520px);
+    border: 1px solid var(--border-soft);
+    border-radius: 10px;
+    background: var(--field);
+  }
+  .blacklist-panel .contacts-table th,
+  .verification-panel .contacts-table th,
+  .blacklist-panel .contacts-table .col-actions {
+    background: var(--field);
+  }
+  .blacklist-panel .contacts-table th:first-child,
+  .blacklist-panel .contacts-table td:first-child,
+  .verification-panel .contacts-table th:first-child,
+  .verification-panel .contacts-table td:first-child {
+    padding-left: 14px;
+  }
+  .blacklist-panel .contacts-table tbody tr:last-child td,
+  .verification-panel .contacts-table tbody tr:last-child td {
+    border-bottom: 0;
+  }
+  .inline-form {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    gap: 8px;
+    align-items: center;
+  }
+  .inline-form input {
+    min-width: 0;
+  }
+  .blacklist-toolbar {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    gap: 10px;
+  }
+
+  /* -------------------------------------------------------- detail sheet */
+  .contact-details-section {
+    margin: 0 20px;
+    border-top: 1px solid var(--border-soft);
+    padding: 14px 0;
+  }
+  .contact-details-section h3 {
+    margin: 0 0 8px;
+    color: var(--muted);
+    font-size: 0.75rem;
+    font-weight: 600;
+  }
+  .contact-details-section dl {
+    display: grid;
+    gap: 6px;
+    margin: 0;
+  }
+  .contact-details-section dl > div {
+    display: grid;
+    grid-template-columns: 9rem minmax(0, 1fr);
+    gap: 10px;
+    font-size: 0.8125rem;
+  }
+  .contact-details-section dt {
+    color: var(--muted);
+  }
+  .contact-details-section dd {
+    margin: 0;
+    color: var(--text);
+    overflow-wrap: anywhere;
+  }
+
+  /* ------------------------------------------------------- import progress */
+  .import-progress,
+  .progress-card {
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    color: var(--text);
+    background: var(--surface);
+  }
+  .import-progress {
+    display: grid;
+    grid-template-columns: 1fr auto;
+    gap: 10px 14px;
+    align-items: center;
+  }
+  .import-progress > span {
+    color: var(--muted);
+    font-size: 0.8125rem;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+  }
+  .import-progress [data-slot="progress"],
+  .progress-card [data-slot="progress"] {
+    grid-column: 1 / -1;
+    width: 100%;
+  }
+  .import-progress-actions {
+    grid-column: 1 / -1;
+    display: flex;
+    gap: 6px;
+  }
+
+  /* ------------------------------------------------------------- callouts */
+  .callout,
+  .verification-tls-note,
+  .verification-warning,
+  .danger-warning {
+    display: grid;
+    gap: 4px;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    color: var(--muted);
+    background: var(--surface);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+  .callout strong,
+  .verification-tls-note strong {
+    color: var(--text);
+    font-weight: 600;
+  }
+  .callout-success {
+    border-color: rgb(127 212 175 / 0.25);
+    background: rgb(127 212 175 / 0.05);
+  }
+  .verification-tls-note {
+    border-color: rgb(240 184 71 / 0.25);
+    background: rgb(240 184 71 / 0.05);
+  }
+  .verification-tls-note strong {
+    color: var(--warning);
+  }
+  .verification-warning,
+  .danger-warning {
+    border-color: rgb(255 107 112 / 0.3);
+    background: rgb(255 107 112 / 0.06);
+  }
+  .verification-warning strong,
+  .danger-warning {
+    color: var(--danger);
+  }
+  .danger-warning {
+    display: flex;
+    gap: 10px;
+    align-items: center;
+  }
+  .danger-warning strong {
+    font-weight: 500;
+  }
+
+  /* ---------------------------------------------------------- verification */
+  .verification-settings-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 14px;
+  }
+  .verification-inline-note {
+    color: var(--faint);
+    font-size: 0.75rem;
+    line-height: 1.45;
+  }
+  .verification-panel .verification-tls-note {
+    margin: 14px 0;
+  }
+  .verification-warning {
+    margin-bottom: 14px;
+  }
+  .verification-start-actions {
+    margin-bottom: 10px;
+  }
+  .verification-progress-heading {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    margin-bottom: 10px;
+    color: var(--muted);
+    font-size: 0.8125rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .verification-progress-heading strong {
+    color: var(--text);
+    font-size: 1rem;
+    font-weight: 600;
+  }
+  .verification-outcome-grid,
+  .verification-history-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    color: var(--muted);
+    font-size: 0.8125rem;
+  }
+  .verification-outcome-grid {
+    margin: 16px 0;
+  }
+  .verification-outcome-grid span,
+  .verification-history-grid span {
+    display: flex;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 10px 14px;
+    background: var(--panel);
+  }
+  .verification-outcome-grid strong,
+  .verification-history-grid strong {
+    color: var(--text);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+  .verification-error {
+    margin: 12px 0 0;
+    color: var(--danger);
+    font-size: 0.8125rem;
+  }
+
+  /* ------------------------------------------------------------------- AI */
+  .ai-panel .section-heading p {
+    overflow-wrap: anywhere;
+  }
+  .ai-control-row {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 12px;
+    align-items: center;
+  }
+  .ai-provider-status {
+    display: inline-flex;
+    gap: 8px;
+    align-items: center;
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.8125rem;
+  }
+  .ai-provider-status::before {
+    content: "";
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--success);
+  }
+  .ai-provider-status.is-down::before {
+    background: var(--warning);
+  }
+  .ai-progress-heading {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 8px 12px;
+    margin-bottom: 10px;
+    color: var(--muted);
+    font-size: 0.8125rem;
+  }
+  .ai-progress-heading strong {
+    min-width: 0;
+    color: var(--text);
+    font-size: 1rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    overflow-wrap: anywhere;
+  }
+  .ai-panel .progress-card p {
+    margin: 10px 0 0;
+    color: var(--muted);
+    font-size: 0.8125rem;
+  }
+  .ai-log-panel .section-heading > div {
+    flex: 1 1 auto;
+    align-self: stretch;
+  }
+  .ai-run-metrics {
+    grid-template-columns: repeat(6, minmax(0, 1fr));
+    margin-top: 14px;
+  }
+  .ai-run-metric {
+    display: grid;
+    gap: 3px;
+    padding: 10px 14px;
+    background: var(--panel);
+  }
+  .ai-run-metric dt {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.75rem;
+  }
+  .ai-run-metric dd {
+    margin: 0;
+    color: var(--text);
+    font-size: 1.0625rem;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+    letter-spacing: -0.01em;
+  }
+  .ai-run-metric-status dd {
+    color: var(--brand);
+  }
+  .ai-activity-log {
+    max-height: min(48vh, 440px);
+    overflow: auto;
+    border: 1px solid var(--border-soft);
+    border-radius: 10px;
+    padding: 6px 0;
+    background: var(--field);
+    font-family: var(--font-code);
+    font-size: 0.75rem;
+    line-height: 1.5;
+  }
+  .ai-activity-line {
+    display: grid;
+    grid-template-columns: 5.2rem 1fr;
+    gap: 10px;
+    padding: 4px 14px;
+    color: var(--muted);
+  }
+  .ai-activity-line:hover {
+    background: rgb(255 255 255 / 0.02);
+  }
+  .ai-activity-line time {
+    color: var(--faint);
+    font-variant-numeric: tabular-nums;
+  }
+  .ai-activity-line span {
+    overflow-wrap: anywhere;
+  }
+  .ai-activity-ok span {
+    color: color-mix(in oklab, var(--text) 80%, var(--success));
+  }
+  .ai-activity-warn span {
+    color: var(--warning);
+  }
+  .ai-activity-error span {
+    color: var(--danger);
+  }
+  .ai-empty-state {
+    margin: 0;
+    padding: 28px 14px;
+    color: var(--faint);
+    font-family: var(--font-ui);
+    font-size: 0.8125rem;
+    text-align: center;
+  }
+  .review-list {
+    display: grid;
+    gap: 0;
+    border: 1px solid var(--border-soft);
+    border-radius: 10px;
+    overflow: hidden;
+  }
+  .review-card {
+    display: grid;
+    grid-template-columns: minmax(0, 1.2fr) minmax(0, 1.5fr) auto;
+    gap: 16px;
+    align-items: center;
+    padding: 10px 14px;
+    background: var(--surface);
+  }
+  .review-card + .review-card {
+    border-top: 1px solid var(--border-soft);
+  }
+  .review-card > * {
+    min-width: 0;
+  }
+  .review-card strong {
+    overflow: hidden;
+    color: var(--text);
+    font-weight: 500;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .review-card p {
+    margin: 0;
+    color: var(--muted);
+    overflow-wrap: anywhere;
+  }
+  .review-card .review-arrow {
+    color: var(--brand);
+  }
+
+  /* --------------------------------------------------------------- search */
+  .search-query-block {
+    display: grid;
+    gap: 10px;
+  }
+  .search-query-row {
+    display: flex;
+    gap: 8px;
+  }
+  .search-query-row .search-field {
+    flex: 1 1 auto;
+  }
+  .search-sources {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 12px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .search-source {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    gap: 14px;
+    min-width: 0;
+    border: 1px solid var(--border-soft);
+    border-radius: 12px;
+    padding: 14px 16px;
+    background: var(--surface);
+  }
+  .search-source-text {
+    display: grid;
+    gap: 4px;
+    min-width: 0;
+  }
+  .search-source-text strong {
+    color: var(--text);
+    font-size: 0.875rem;
+    font-weight: 600;
+    line-height: 1.35;
+  }
+  .search-source-meta {
+    color: var(--faint);
+    font-size: 0.75rem;
+    line-height: 1.4;
+    overflow-wrap: anywhere;
+  }
+  .search-source-note {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+  .search-source-actions {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .search-panels {
+    display: grid;
+    gap: 14px;
+  }
+  .search-panel {
+    border: 1px solid var(--border-soft);
+    border-radius: 14px;
+    background: var(--surface);
+  }
+  .search-panel > summary {
+    display: grid;
+    gap: 4px;
+    padding: 16px 18px;
+    cursor: pointer;
+    color: var(--muted);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+    list-style-position: inside;
+  }
+  .search-panel > summary strong {
+    display: inline;
+    color: var(--text);
+    font-size: 0.9375rem;
+    font-weight: 600;
+  }
+  .search-panel[open] > summary {
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .search-panel-body {
+    display: grid;
+    gap: 18px;
+    padding: 18px;
+  }
+  .search-panel-note {
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+  .search-tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 10px;
+  }
+  .search-tab {
+    display: grid;
+    gap: 4px;
+    border: 1px solid var(--border-soft);
+    border-radius: 12px;
+    padding: 12px 16px;
+    background: transparent;
+    color: var(--muted);
+    font-size: 0.8125rem;
+    line-height: 1.4;
+    text-align: start;
+    cursor: pointer;
+  }
+  .search-tab strong {
+    color: var(--text);
+    font-size: 0.9375rem;
+    font-weight: 600;
+  }
+  .search-tab[aria-selected="true"] {
+    border-color: var(--brand);
+    background: var(--surface);
+  }
+  .search-options-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 10px 24px;
+    align-items: center;
+    border: 1px solid var(--border-soft);
+    border-radius: 12px;
+    padding: 12px 16px;
+    color: var(--muted);
+    font-size: 0.8125rem;
+  }
+  .search-options-row label {
+    display: inline-flex;
+    gap: 8px;
+    align-items: center;
+  }
+  .search-form {
+    display: grid;
+    gap: 10px;
+    min-width: 0;
+    margin: 0;
+    border: 0;
+    border-top: 1px solid var(--border-soft);
+    padding: 16px 0 0;
+  }
+  .search-form legend {
+    float: left;
+    width: 100%;
+    padding: 0;
+    color: var(--text);
+    font-size: 0.875rem;
+    font-weight: 600;
+  }
+  .search-form-hint {
+    clear: both;
+    margin: 0;
+    color: var(--muted);
+    font-size: 0.8125rem;
+    line-height: 1.5;
+  }
+  .search-form-fields {
+    clear: both;
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(210px, 1fr));
+    gap: 10px 12px;
+    align-items: start;
+  }
+  .search-form-fields > button {
+    justify-self: start;
+  }
+  .search-form-wide {
+    grid-column: 1 / -1;
+  }
+  .native-select,
+  .native-number,
+  .native-textarea {
+    min-width: 0;
+    height: 2rem;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 0 8px;
+    background: var(--field);
+    color: var(--text);
+    font-size: 0.8125rem;
+  }
+  .native-select:disabled {
+    opacity: 0.5;
+  }
+  .native-number {
+    width: 5.5rem;
+  }
+  .native-textarea {
+    height: auto;
+    padding: 8px 10px;
+    line-height: 1.5;
+    resize: vertical;
+  }
+  .cell-accent {
+    color: var(--brand);
+  }
+  .score-filter-row {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 12px;
+    align-items: center;
+    color: var(--muted);
+    font-size: 0.8125rem;
+  }
+  .score-filter-row output {
+    min-width: 2.5ch;
+    color: var(--text);
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (max-width: 1100px) {
+    .ai-run-metrics {
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+    }
+    .stat-strip {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+  }
+  @media (max-width: 767px) {
+    .mobile-app-bar {
+      display: flex;
+      flex: 0 0 auto;
+      min-height: 52px;
+      align-items: center;
+      gap: 8px;
+      border-bottom: 1px solid var(--border-soft);
+      padding: 6px 14px;
+      color: var(--muted);
+      font-size: 0.75rem;
+    }
+    .mobile-app-bar [data-slot="sidebar-trigger"] {
+      flex: 0 0 auto;
+    }
+    :root[data-window-chrome="mac-overlay"] .window-chrome-layer,
+    .window-chrome-layer {
+      display: none;
+    }
+    :root[data-window-chrome="mac-overlay"] [data-slot="sidebar-inset"] {
+      padding-top: 0;
+    }
+    :root[data-window-chrome="mac-overlay"] .workspace {
+      padding-top: var(--sidebar-island-inset);
+    }
+    .workspace {
+      padding: var(--sidebar-island-inset);
+    }
+    .topbar {
+      align-items: flex-start;
+      flex-direction: column;
+    }
+    .header-metrics > div {
+      text-align: left;
+    }
+    .section-heading {
+      flex-direction: column;
+    }
+    .section-heading-row {
+      flex-direction: column !important;
+      align-items: flex-start !important;
+    }
+    .review-card {
+      grid-template-columns: 1fr;
+    }
+    .stat-strip,
+    .ai-run-metrics,
+    .inline-form,
+    .blacklist-toolbar,
+    .verification-settings-grid,
+    .verification-outcome-grid,
+    .verification-history-grid {
+      grid-template-columns: 1fr;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      scroll-behavior: auto !important;
+      transition-duration: 0.01ms !important;
+      animation-duration: 0.01ms !important;
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Island section flattening.
+   These rules intentionally live outside @layer components. Card base utilities
+   (rounded-xl border bg-card py-4 gap-4 in src/components/ui/card.tsx) are
+   emitted in Tailwind's utilities layer, which always beats component-layer
+   rules, so the flattening has to be unlayered to win. Only Card wrappers that
+   also carry a panel class are flattened; inner cards (.import-progress) keep
+   their chrome.
+   --------------------------------------------------------------------------- */
+.content-island > .ai-panel,
+.content-island > .blacklist-panel,
+.content-island > .settings-panel,
+.content-island > .ai-log-panel,
+.content-island > .verification-panel {
+  margin-bottom: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  padding: var(--space-4) 20px;
+  gap: 14px;
+}
+/* CardHeader/CardContent ship px-4; the section owns the horizontal inset so
+   header text and card text line up at the same 20px inset (no double inset). */
+.content-island > .ai-panel > [data-slot="card-header"],
+.content-island > .blacklist-panel > [data-slot="card-header"],
+.content-island > .settings-panel > [data-slot="card-header"],
+.content-island > .ai-log-panel > [data-slot="card-header"],
+.content-island > .verification-panel > [data-slot="card-header"],
+.content-island > .ai-panel > [data-slot="card-content"],
+.content-island > .blacklist-panel > [data-slot="card-content"],
+.content-island > .settings-panel > [data-slot="card-content"],
+.content-island > .ai-log-panel > [data-slot="card-content"],
+.content-island > .verification-panel > [data-slot="card-content"] {
+  padding-left: 0;
+  padding-right: 0;
+}
+/* SettingsPage nests its second section in <details>, so its summary and content
+   are grandchildren of the panel Card; keep them at the same text inset. */
+.content-island > .settings-panel > details > summary,
+.content-island > .settings-panel > details > [data-slot="card-content"] {
+  padding-left: 0;
+  padding-right: 0;
+}
+/* Hairline dividers between stacked sections. Declared after the flatten rules
+   above so `border: 0` does not erase them (equal specificity, later wins). */
+.island-section + .island-section {
+  border-top: 1px solid var(--border-soft);
+}
+.island-section-header + .island-section {
+  border-top: 0;
+}
+/* Windows / default chrome: sidebar toggle is fixed top-right over the island
+   corner, so reserve clearance in the page header to avoid covering header
+   actions (e.g. Importa contatti). 20px is the island section's horizontal
+   gutter, --titlebar-toggle-size is the button, and the trailing 12px is a
+   deliberate breathing margin between the button and header actions (not
+   --titlebar-toggle-gap, which positions the mac toggle after the traffic
+   lights and is too tight here). Scoped to default chrome only; mac-overlay
+   keeps the toggle after the traffic lights on the left. */
+:root[data-window-chrome="default"] .island-section-header {
+  padding-right: calc(20px + var(--titlebar-toggle-size) + 12px);
+}
+/* Mobile: the sidebar switches to its offcanvas sheet and WindowChrome renders
+   null, so no fixed toggle overlaps the header. Reset the clearance back to the
+   section's 20px gutter. This @media must stay UNLAYERED: the clearance rule
+   above is unlayered, and unlayered declarations always beat @layer components,
+   so the same reset placed inside the layered mobile block would be ignored. */
+@media (max-width: 767px) {
+  :root[data-window-chrome="default"] .island-section-header {
+    padding-right: 20px;
+  }
+}

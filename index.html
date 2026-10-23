@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="/vite.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="dark" />
+    <title>Database Contatti</title>
+    <script>
+      // Mirrors usesMacOverlayTitlebar() in src/lib/windowChrome.ts. Runs before
+      // first paint so the sidebar island never jumps from 14px to 44px inset.
+      // The regexes, dataset values, and !!globalThis.isTauri mirror (matching
+      // isTauri() in @tauri-apps/api/core) are pinned by
+      // src/lib/windowChromeParity.test.ts; keep all three in sync.
+      (function () {
+        var isMac = /Mac/.test(navigator.platform) || /Macintosh/.test(navigator.userAgent);
+        var overlay = isMac && !!globalThis.isTauri;
+        document.documentElement.dataset.windowChrome = overlay ? "mac-overlay" : "default";
+      })();
+    </script>
+  </head>
+
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

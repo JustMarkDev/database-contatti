@@ -1,0 +1,259 @@
+# Addresses extracted per corpus file. Regenerate with UPDATE_CORPUS_BASELINE=1.
+Associazioni/APT & Turismo & Proloco.xlsx	9233
+Associazioni/APT, Turismo & Proloco.txt	25143
+Associazioni/Alpini 1.xlsx	2450
+Associazioni/Alpini 2.txt	4222
+Associazioni/Alpini 3.txt	2521
+Associazioni/Alpini 4.txt	7107
+Associazioni/Associazione Genitori 1.xlsx	388
+Associazioni/Associazione Genitori 2.xlsx	2214
+Associazioni/Associazione Genitori 3.txt	8856
+Associazioni/Associazione NOI.txt	157
+Associazioni/Associazione NOI.xlsx	161
+Associazioni/Associazioni 1.xlsx	8427
+Associazioni/Associazioni 2.xlsx	4344
+Associazioni/Associazioni 3.txt	4344
+Associazioni/Associazioni 4.txt	8427
+Associazioni/Associazioni 5.txt	215
+Associazioni/Associazioni CAI.txt	474
+Associazioni/Associazioni Culturali 2.txt	666
+Associazioni/Associazioni Culturali 3.txt	3054
+Associazioni/Associazioni Culturali 4.txt	3054
+Associazioni/Associazioni Culturali.txt	927
+Associazioni/Associazioni Milano.txt	18
+Associazioni/Associazioni Sportive.txt	343
+Associazioni/Biblioteche 1.txt	2858
+Associazioni/Biblioteche 2.xlsx	2858
+Associazioni/Biblioteche Milano.txt	197
+Associazioni/Comuni & Biblioteche.txt	23722
+Associazioni/Comunita Montane Trentino.txt	16
+Associazioni/Comunita Montane, APT, Turistici, Lombardia.txt	199
+Associazioni/Frati Agostiniani.xlsx	169
+Associazioni/Frati Domenicani.xlsx	98
+Associazioni/Frati Minori.xlsx	223
+Associazioni/Frati.txt	501
+Associazioni/Lions & Rotary.txt	1575
+Associazioni/Lions Club.csv	767
+Associazioni/Proloco 1.txt	2382
+Associazioni/Proloco 2.txt	1900
+Associazioni/Proloco.txt	1761
+Associazioni/Rotary Club.csv	808
+Associazioni/Teatri 2.txt	1200
+Associazioni/Teatri 3.txt	29
+Associazioni/Teatri Milano.txt	16
+Associazioni/Teatri.txt	1104
+Associazioni/Turistici.xlsx	6603
+Comuni/Comuni 1.txt	15763
+Comuni/Comuni 10.txt	21499
+Comuni/Comuni 2.xlsx	15763
+Comuni/Comuni 3.txt	15867
+Comuni/Comuni 4.xlsx	177086
+Comuni/Comuni 5.xlsx	738
+Comuni/Comuni 6.txt	126692
+Comuni/Comuni 7.txt	177087
+Comuni/Comuni 8.txt	71290
+Comuni/Comuni 9.txt	1211
+Comuni/Comuni Bergamo.txt	13
+Comuni/Comuni Brescia.txt	53
+Comuni/Comuni Como.txt	113
+Comuni/Comuni Lecco.txt	39
+Comuni/Comuni Milano.txt	16
+Comuni/Comuni Reggio Emilia.txt	29
+Comuni/Comuni Sardegna.txt	738
+Comuni/Comuni Sondrio.txt	76
+Comuni/Comuni Svizzera.txt	114
+Parrocchie/Chiese 1.csv	1604
+Parrocchie/Chiese 2.csv	482
+Parrocchie/Chiese Bologna.csv	2796
+Parrocchie/Chiese Carpi.csv	447
+Parrocchie/Chiese Milano.csv	1303
+Parrocchie/Curati.csv	218
+Parrocchie/Decanati 2.txt	45
+Parrocchie/Decanati.txt	45
+Parrocchie/Diocesi Bergamo.csv	873
+Parrocchie/Diocesi Brescia.csv	892
+Parrocchie/Diocesi Como 2.txt	36
+Parrocchie/Diocesi Como.csv	320
+Parrocchie/Diocesi Cremona.csv	161
+Parrocchie/Diocesi Lodi.csv	1505
+Parrocchie/Diocesi Mantova.csv	1877
+Parrocchie/Diocesi.csv	86
+Parrocchie/Don 1.csv	1854
+Parrocchie/Don 2.csv	242
+Parrocchie/Odielle.csv	192
+Parrocchie/Oratori Brescia 2.txt	22
+Parrocchie/Oratori Brescia.txt	22
+Parrocchie/Oratori.txt	4377
+Parrocchie/Parrocchie & Diocesi Como.txt	36
+Parrocchie/Parrocchie & Oratori Bergamo 2.txt	83
+Parrocchie/Parrocchie & Oratori Bergamo.txt	83
+Parrocchie/Parrocchie & Oratori Brescia.txt	312
+Parrocchie/Parrocchie & Oratori Como 2.txt	40
+Parrocchie/Parrocchie & Oratori Como.txt	40
+Parrocchie/Parrocchie & Oratori Lecco 2.txt	15
+Parrocchie/Parrocchie & Oratori Lecco.txt	15
+Parrocchie/Parrocchie & Oratori Milano.txt	312
+Parrocchie/Parrocchie & Oratori Varese 2.txt	12
+Parrocchie/Parrocchie & Oratori Varese.txt	12
+Parrocchie/Parrocchie 1.csv	316
+Parrocchie/Parrocchie 10.txt	8
+Parrocchie/Parrocchie 11.txt	2978
+Parrocchie/Parrocchie 12.txt	2470
+Parrocchie/Parrocchie 13.txt	4381
+Parrocchie/Parrocchie 14.txt	108539
+Parrocchie/Parrocchie 15.txt	48589
+Parrocchie/Parrocchie 16.txt	6365
+Parrocchie/Parrocchie 2.txt	16626
+Parrocchie/Parrocchie 3.txt	7
+Parrocchie/Parrocchie 4.xlsx	2590
+Parrocchie/Parrocchie 5.csv	563
+Parrocchie/Parrocchie 6.xlsx	289
+Parrocchie/Parrocchie 7.txt	11076
+Parrocchie/Parrocchie 8.xlsx	5508
+Parrocchie/Parrocchie 9.txt	163
+Parrocchie/Parrocchie Brescia.txt	59
+Parrocchie/Parrocchie Lombardia.txt	25035
+Parrocchie/Parrocchie, Vicari & Oratori.txt	2901
+Parrocchie/Parrochie & Oratori Lombardia.txt	1509
+Parrocchie/Parrochie Brescia.txt	59
+Parrocchie/Preti 1.txt	638
+Parrocchie/Preti 2.csv	304
+Parrocchie/Preti 3.csv	1445
+Parrocchie/Preti 4.txt	134
+Parrocchie/Preti Lombardia.txt	1509
+Parrocchie/Sacerdoti 1.txt	532
+Parrocchie/Sacerdoti 2.csv	120
+Parrocchie/Salesiani 2.txt	27
+Parrocchie/Salesiani 3.txt	145
+Parrocchie/Salesiani.txt	37
+Scuole/Scuole 1.csv	80984
+Scuole/Scuole 10.csv	46028
+Scuole/Scuole 11.csv	332
+Scuole/Scuole 12.txt	25666
+Scuole/Scuole 13.xlsx	2552
+Scuole/Scuole 14.xlsx	1019
+Scuole/Scuole 15.xlsx	5177
+Scuole/Scuole 16.txt	1433
+Scuole/Scuole 17.xlsx	1027
+Scuole/Scuole 18.xlsx	2627
+Scuole/Scuole 19.xlsx	1270
+Scuole/Scuole 2.xlsx	23997
+Scuole/Scuole 20.xlsx	14920
+Scuole/Scuole 21.xlsx	3377
+Scuole/Scuole 22.xlsx	7
+Scuole/Scuole 23.xlsx	724
+Scuole/Scuole 24.csv	39831
+Scuole/Scuole 25.csv	59527
+Scuole/Scuole 26.xlsx	1096
+Scuole/Scuole 27.xlsx	2289
+Scuole/Scuole 28.xlsx	29268
+Scuole/Scuole 29.xlsx	79
+Scuole/Scuole 3.xlsx	1119
+Scuole/Scuole 30.xlsx	39159
+Scuole/Scuole 31.csv	1440
+Scuole/Scuole 32.xlsx	1501
+Scuole/Scuole 33.xlsx	70
+Scuole/Scuole 34.xlsx	4591
+Scuole/Scuole 35.xlsx	467
+Scuole/Scuole 36.csv	53624
+Scuole/Scuole 37.csv	25739
+Scuole/Scuole 38.xlsx	16204
+Scuole/Scuole 39.csv	63
+Scuole/Scuole 4.csv	80984
+Scuole/Scuole 40.csv	7978
+Scuole/Scuole 41.csv	11985
+Scuole/Scuole 42.csv	3895
+Scuole/Scuole 43.txt	45
+Scuole/Scuole 44.txt	2105
+Scuole/Scuole 45.txt	28457
+Scuole/Scuole 46.xlsx	17884
+Scuole/Scuole 47.xlsx	14920
+Scuole/Scuole 48.txt	225
+Scuole/Scuole 49.xlsx	6890
+Scuole/Scuole 5.xlsx	1980
+Scuole/Scuole 50.xlsx	329
+Scuole/Scuole 51.txt	395
+Scuole/Scuole 52.xlsx	543
+Scuole/Scuole 53.xlsx	79
+Scuole/Scuole 54.xlsx	58431
+Scuole/Scuole 55.txt	26074
+Scuole/Scuole 56.txt	31472
+Scuole/Scuole 57.txt	55646
+Scuole/Scuole 58.txt	3717
+Scuole/Scuole 59.txt	518
+Scuole/Scuole 6.xlsx	2258
+Scuole/Scuole 60.txt	44458
+Scuole/Scuole 61.txt	587
+Scuole/Scuole 62.txt	105838
+Scuole/Scuole 63.txt	1562
+Scuole/Scuole 64.txt	119453
+Scuole/Scuole 65.txt	6895
+Scuole/Scuole 66.txt	198367
+Scuole/Scuole 67.txt	417553
+Scuole/Scuole 68.txt	21146
+Scuole/Scuole 69.txt	3041
+Scuole/Scuole 7.xlsx	1251
+Scuole/Scuole 70.txt	51133
+Scuole/Scuole 71.txt	44044
+Scuole/Scuole 72.txt	95
+Scuole/Scuole 73.txt	3645
+Scuole/Scuole 74.txt	344
+Scuole/Scuole 75.txt	111
+Scuole/Scuole 76.txt	29
+Scuole/Scuole 77.txt	5122
+Scuole/Scuole 78.txt	1196
+Scuole/Scuole 79.txt	11
+Scuole/Scuole 8.xlsx	692
+Scuole/Scuole 9.txt	10757
+Scuole/Scuole Asili 2.txt	1747
+Scuole/Scuole Asili.txt	4704
+Scuole/Scuole Basilicata.txt	191
+Scuole/Scuole Calabria 2.txt	1036
+Scuole/Scuole Calabria.txt	518
+Scuole/Scuole Como 2.txt	87
+Scuole/Scuole Como.txt	88
+Scuole/Scuole Elementari.txt	12217
+Scuole/Scuole Emilia Romagna 2.txt	559
+Scuole/Scuole Emilia Romagna 3.txt	2748
+Scuole/Scuole Emilia Romagna.txt	1901
+Scuole/Scuole Firenze.txt	212
+Scuole/Scuole Infanzia & Primaria 2.txt	24941
+Scuole/Scuole Infanzia & Primaria.txt	15501
+Scuole/Scuole Lecce.txt	147
+Scuole/Scuole Lecco.txt	28
+Scuole/Scuole Liguria 2.txt	259
+Scuole/Scuole Liguria.txt	302
+Scuole/Scuole Lombardia 2.txt	5098
+Scuole/Scuole Lombardia.txt	6775
+Scuole/Scuole Medie & Superiori di Lecco & Como.txt	779
+Scuole/Scuole Medie.txt	4948
+Scuole/Scuole Milano 2.txt	170
+Scuole/Scuole Milano.txt	41
+Scuole/Scuole Piemonte 1.txt	264
+Scuole/Scuole Piemonte 2.txt	3351
+Scuole/Scuole Piemonte.txt	2269
+Scuole/Scuole Puglia.txt	1270
+Scuole/Scuole Reggio Emilia.txt	247
+Scuole/Scuole Sondrio 2.txt	10
+Scuole/Scuole Sondrio.txt	145
+Scuole/Scuole Superiori.txt	8605
+Scuole/Scuole Svizzera.txt	218
+Scuole/Scuole Toscana 2.txt	2371
+Scuole/Scuole Toscana.txt	472
+Scuole/Scuole Trentino Alto Adige.txt	328
+Scuole/Scuole Val D'Aosta.txt	16
+Scuole/Scuole Veneto 2.txt	3704
+Scuole/Scuole Veneto.txt	537
+Varie/Calabria 2.txt	107
+Varie/Contatti Personali 2.txt	224
+Varie/Contatti Personali 3.txt	533
+Varie/Contatti Personali.txt	68
+Varie/Eventi & Sagre.txt	175
+Varie/Scuole, Comuni & Parrocchie.txt	92
+Varie/Svizzera.txt	122
+Varie/Trentino Alto Adige.txt	330
+Varie/Varie 1.txt	1185
+Varie/Varie 3.txt	40
+Varie/Varie Varese.txt	155
+Varie/Varie.xlsx	1183
+blacklist.csv	9955

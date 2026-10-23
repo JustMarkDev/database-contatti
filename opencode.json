@@ -1,0 +1,12 @@
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "tinyfish": {
+      "type": "remote",
+      "url": "https://agent.tinyfish.ai/mcp?source=tinyfish_cli&client=opencode",
+      "headers": {
+        "X-API-Key": "{file:~/.config/opencode/secrets/tinyfish-api-key}"
+      }
+    }
+  }
+}

@@ -1,0 +1,72 @@
+{
+  "name": "database-contatti",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vp dev",
+    "preview": "vp preview",
+    "tauri": "tauri",
+    "build": "vp build",
+    "check": "bun run check:js && bun run check:rust",
+    "check:js": "vp check",
+    "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --check && bun run lint:rust",
+    "lint": "vp lint && bun run lint:rust",
+    "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings",
+    "format": "vp fmt && bun run format:rust",
+    "format:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml",
+    "test": "bun run test:js && bun run test:rust",
+    "test:js": "vp test run",
+    "test:rust": "cargo nextest run --manifest-path src-tauri/Cargo.toml --locked",
+    "test:corpus": "cargo test --release --manifest-path src-tauri/Cargo.toml corpus_extraction_matches_committed_baseline -- --ignored --nocapture",
+    "test:cascade": "cargo test --release --manifest-path src-tauri/Cargo.toml cascade_jev_luna_live_benchmark -- --ignored --nocapture --test-threads=1",
+    "test:performance": "cargo test --release --locked --manifest-path src-tauri/Cargo.toml app_performance_ -- --ignored --nocapture --test-threads=1",
+    "audit": "bun audit && cargo audit --file src-tauri/Cargo.lock --target-os macos --target-os windows",
+    "prepare": "vp config"
+  },
+  "dependencies": {
+    "@base-ui/react": "^1.8.0",
+    "@hugeicons/core-free-icons": "^4.3.5",
+    "@hugeicons/react": "^1.1.10",
+    "@tauri-apps/api": "^2.12.1",
+    "@tauri-apps/plugin-dialog": "^2.8.1",
+    "@tauri-apps/plugin-opener": "^2.7.0",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "cmdk": "^1.1.1",
+    "morphicons": "^1.7.1",
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "tailwind-merge": "^3.7.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@tauri-apps/cli": "^2.12.1",
+    "@testing-library/jest-dom": "^7.0.1",
+    "@testing-library/react": "^16.3.3",
+    "@testing-library/user-event": "^14.6.7",
+    "@types/node": "^26.6.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "@voidzero-dev/vite-plus-core": "^1.0.0",
+    "jsdom": "^30.1.1",
+    "tailwindcss": "^4.3.3",
+    "tw-animate-css": "^1.4.0",
+    "typescript": "~7.0.2",
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.4.0",
+    "vite-plus": "1.4.0"
+  },
+  "overrides": {
+    "nanoid": "^3.3.17",
+    "postcss": "^8.5.23",
+    "vite": "npm:@voidzero-dev/vite-plus-core@1.4.0"
+  },
+  "devEngines": {
+    "packageManager": {
+      "name": "bun",
+      "version": "1.4.2",
+      "onFail": "download"
+    }
+  }
+}

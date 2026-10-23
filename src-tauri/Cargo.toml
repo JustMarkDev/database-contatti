@@ -1,0 +1,55 @@
+[package]
+name = "database-contatti"
+version = "0.1.0"
+description = "Local desktop app for importing, classifying, and exporting email contacts"
+edition = "2024"
+# `src/bin/database-contatti-mcp.rs` is a second binary: keep `tauri dev` on the app.
+default-run = "database-contatti"
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "database_contatti_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-opener = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+calamine = "0.36"
+csv = "1.4"
+encoding_rs = "0.8"
+email_address = "0.2"
+hickory-resolver = "0.26"
+regex = "1.12"
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
+futures = "0.3"
+rusqlite = { version = "0.40", features = ["backup", "bundled"] }
+uuid = { version = "1.10", features = ["v4"] }
+tauri-plugin-dialog = "2"
+chardetng = "1.0.0"
+sha2 = "0.11"
+quick-xml = "0.42"
+zip = { version = "8.6", default-features = false, features = ["deflate"] }
+native-tls = "0.2"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "http2"] }
+tokio = { version = "1", features = ["time"] }
+lopdf = { version = "0.45", default-features = false }
+# Already compiled in through `zip`; used directly to read Common Crawl WARC records.
+flate2 = "1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+# Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+panic = "abort"
+strip = true
