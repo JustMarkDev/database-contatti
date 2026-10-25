@@ -1,11 +1,13 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   cancelLeadCrawl,
+  discoverByMaps,
   discoverBySearch,
   exploreDirectory,
   exploreSeeds,
   exportSearchLeadsTxt,
   findSeedSites,
+  getContextdevSettings,
   getLeadFilterOptions,
   importLeadSource,
   listLeadSources,
@@ -64,6 +66,8 @@ const SITES_PER_RUN = 50;
 const SITES_TO_FIND = 50;
 /** Where web-search discoveries land (`lead_candidates::CHANNEL_SEARCH`). */
 const SEARCH_LIST = "Scoperta: ricerca web";
+/** Where Google Maps discoveries land (`lead_candidates::CHANNEL_MAPS`). */
+const MAPS_LIST = "Scoperta: Google Maps";
 /** Every crawl reads pages with the IA: it is what finds roles, offices and places. */
 const USE_AI = true;
 
@@ -281,6 +285,7 @@ export function SearchPage({
 
   const [sources, setSources] = useState<LeadSource[] | null>(null);
   const [seedLists, setSeedLists] = useState<SeedListView[]>([]);
+  const [mapsEnabled, setMapsEnabled] = useState(false);
 
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
@@ -346,6 +351,9 @@ export function SearchPage({
       .catch(report);
     void listSeedLists()
       .then((value) => mounted.current && setSeedLists(value))
+      .catch(report);
+    void getContextdevSettings()
+      .then((value) => mounted.current && setMapsEnabled(value.maps_enabled))
       .catch(report);
   }, [active, mode, refreshKey]);
 
@@ -446,6 +454,17 @@ export function SearchPage({
         newSites = report.accepted;
         return report.accepted > 0 ? readList(SEARCH_LIST, plan) : null;
       });
+      if (mapsEnabled && plan.subcategory && plan.regione) {
+        await attempt("Google Maps", async () => {
+          const report = await discoverByMaps({
+            category: plan.category,
+            subcategory: plan.subcategory,
+            regione: plan.regione,
+          });
+          newSites += report.accepted;
+          return report.accepted > 0 ? readList(MAPS_LIST, plan) : null;
+        });
+      }
       if (mounted.current) {
         setSearchText("");
         setFilters({

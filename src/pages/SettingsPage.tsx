@@ -12,7 +12,12 @@ import { detectOpencode, detectTypesafe, getTypesafeApiKey, setTypesafeApiKey } 
 import { exportDatabaseBackup, importDatabaseBackup } from "../api/backup";
 import { clearBlacklist } from "../api/blacklist";
 import { clearContacts, refreshDashboard } from "../api/contacts";
-import { getContextdevApiKey, setContextdevApiKey } from "../api/search";
+import {
+  getContextdevApiKey,
+  getContextdevSettings,
+  setContextdevApiKey,
+  setContextdevSettings,
+} from "../api/search";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
@@ -34,7 +39,14 @@ import {
 import { toast } from "../components/ui/toast";
 import { emptyFilters } from "../features/filters";
 import { platform } from "../platform";
-import type { OpenCodeStatus, TypeSafeKeyView, TypeSafeStatus } from "../types";
+import type { ContextDevSettings, OpenCodeStatus, TypeSafeKeyView, TypeSafeStatus } from "../types";
+
+/** context.dev plans by requests in flight; above the limit every call is refused. */
+const CONTEXTDEV_PLANS = [
+  { value: 2, label: "Free (2 richieste insieme)" },
+  { value: 10, label: "Developer (10)" },
+  { value: 100, label: "Pro (100)" },
+];
 
 type Props = {
   active: boolean;
@@ -151,6 +163,7 @@ function ProvidersCard({ active }: { active: boolean }) {
   const [typesafe, setTypesafe] = useState<TypeSafeStatus | null>(null);
   const [key, setKey] = useState<TypeSafeKeyView | null>(null);
   const [contextdevKey, setContextdevKey] = useState<TypeSafeKeyView | null>(null);
+  const [contextdev, setContextdev] = useState<ContextDevSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [prefs, setPrefs] = useState<OpenCodePrefs>(loadOpenCodePrefs);
 
@@ -166,6 +179,7 @@ function ProvidersCard({ active }: { active: boolean }) {
       detectTypesafe().then(setTypesafe, () => setTypesafe(null)),
       getTypesafeApiKey().then(setKey, () => setKey(null)),
       getContextdevApiKey().then(setContextdevKey, () => setContextdevKey(null)),
+      getContextdevSettings().then(setContextdev, () => setContextdev(null)),
     ]);
     setLoading(false);
   }, []);
@@ -183,6 +197,14 @@ function ProvidersCard({ active }: { active: boolean }) {
     } catch (error) {
       toast.error(String(error));
       return false;
+    }
+  }
+
+  async function saveContextdev(next: ContextDevSettings) {
+    try {
+      setContextdev(await setContextdevSettings(next));
+    } catch (error) {
+      toast.error(String(error));
     }
   }
 
@@ -338,6 +360,43 @@ function ProvidersCard({ active }: { active: boolean }) {
             removable={Boolean(contextdevKey?.configured && !contextdevKey.from_env)}
             onSave={saveContextdevKey}
           />
+          {contextdev && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-1 text-sm">
+                Piano context.dev
+                <Select
+                  value={String(contextdev.concurrency)}
+                  onValueChange={(value) =>
+                    void saveContextdev({ ...contextdev, concurrency: Number(value) })
+                  }
+                >
+                  <SelectTrigger aria-label="Piano context.dev">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {CONTEXTDEV_PLANS.map((plan) => (
+                      <SelectItem key={plan.value} value={String(plan.value)}>
+                        {plan.label}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+              <label className="flex items-center gap-2 text-sm">
+                <input
+                  type="checkbox"
+                  checked={contextdev.maps_enabled}
+                  onChange={(event) =>
+                    void saveContextdev({
+                      ...contextdev,
+                      maps_enabled: event.currentTarget.checked,
+                    })
+                  }
+                />
+                Cerca i siti anche su Google Maps (costo da misurare)
+              </label>
+            </div>
+          )}
         </ProviderRow>
       </CardContent>
     </Card>

@@ -148,6 +148,17 @@ function defaultInvoke(command: string): Promise<unknown> {
       });
     case "find_seed_sites":
       return Promise.resolve(3);
+    case "get_contextdev_settings":
+      return Promise.resolve({ concurrency: 2, maps_enabled: false });
+    case "discover_by_maps":
+      return Promise.resolve({
+        found: 2,
+        known: 0,
+        rejected: 0,
+        accepted: 1,
+        to_verify: 0,
+        credits: 1,
+      });
     case "list_lead_sources":
       return Promise.resolve(catalog);
     case "list_lead_taxonomy":
@@ -417,6 +428,7 @@ describe("SearchPage", () => {
         request: { listName: "Scoperta: ricerca web", ...scoped },
       }),
     );
+    expect(invoke).not.toHaveBeenCalledWith("discover_by_maps", expect.anything());
     expect(invoke).toHaveBeenCalledWith("discover_by_search", {
       request: {
         query: "pro loco Lombardia email",
@@ -436,6 +448,31 @@ describe("SearchPage", () => {
     expect(invoke).toHaveBeenCalledWith("explore_seeds", {
       request: { listName: null, ...scoped },
     });
+  });
+
+  it("adds Google Maps to the request only when it is enabled", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_contextdev_settings") {
+        return Promise.resolve({ concurrency: 2, maps_enabled: true });
+      }
+      return command === "plan_lead_request" ? Promise.resolve(plan) : defaultInvoke(command);
+    });
+    await renderPage("Ricerca web");
+    await userEvent.type(screen.getByLabelText("Descrizione della ricerca lead"), "pro loco");
+    await userEvent.click(screen.getByRole("button", { name: "Cerca" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("explore_seeds", {
+        request: expect.objectContaining({ listName: "Scoperta: Google Maps" }),
+      }),
+    );
+    expect(invoke).toHaveBeenCalledWith("discover_by_maps", {
+      request: {
+        category: "Turismo e promozione territoriale",
+        subcategory: "Pro Loco",
+        regione: "Lombardia",
+      },
+    });
+    expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining("3 siti nuovi"));
   });
 
   it("does not read the search list when the web search finds no new site", async () => {

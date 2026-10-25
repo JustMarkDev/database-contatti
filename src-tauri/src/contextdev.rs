@@ -241,6 +241,82 @@ fn searched(body: &str) -> Result<Vec<SearchHit>, ContextError> {
         })
 }
 
+/// One business from the Google Maps parser (fields used here only).
+#[derive(Debug, Default, Deserialize, PartialEq)]
+pub(crate) struct MapsPlace {
+    #[serde(default)]
+    pub(crate) name: Option<String>,
+    #[serde(default)]
+    pub(crate) website: Option<String>,
+    #[serde(default)]
+    pub(crate) google_category: Vec<String>,
+    #[serde(default)]
+    pub(crate) city: Option<String>,
+    #[serde(default)]
+    pub(crate) address: Option<String>,
+    #[serde(default)]
+    pub(crate) postal_code: Option<String>,
+    #[serde(default)]
+    pub(crate) open_status: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct MapsData {
+    #[serde(default)]
+    results: Vec<MapsPlace>,
+}
+
+#[derive(Deserialize)]
+struct MapsOutput {
+    success: Option<bool>,
+    data: Option<MapsData>,
+    error_code: Option<String>,
+    message: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct MapsResponse {
+    parsed: MapsOutput,
+}
+
+/// Open businesses of a Maps search; a closed one has no mailbox to find.
+fn maps_places(body: &str) -> Result<Vec<MapsPlace>, ContextError> {
+    let response: MapsResponse = serde_json::from_str(body).map_err(|error| {
+        ContextError::Failed(format!("risposta context.dev Maps non valida: {error}"))
+    })?;
+    let parsed = response.parsed;
+    match (parsed.success, parsed.data) {
+        (Some(true), Some(data)) => Ok(data
+            .results
+            .into_iter()
+            .filter(|place| place.open_status.as_deref() != Some("PERMANENTLY_CLOSED"))
+            .collect()),
+        _ => Err(ContextError::Failed(format!(
+            "{}: {}",
+            parsed.error_code.unwrap_or_default(),
+            parsed.message.unwrap_or_default()
+        ))),
+    }
+}
+
+/// `https://www.google.com/maps/search/<words joined by +>/`, each word percent-encoded.
+fn maps_search_url(query: &str) -> String {
+    let words: Vec<String> = query
+        .split_whitespace()
+        .map(|word| {
+            word.bytes()
+                .map(|byte| match byte {
+                    b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'.' | b'_' | b'~' => {
+                        (byte as char).to_string()
+                    }
+                    _ => format!("%{byte:02X}"),
+                })
+                .collect()
+        })
+        .collect();
+    format!("https://www.google.com/maps/search/{}/", words.join("+"))
+}
+
 #[derive(Debug, Deserialize)]
 pub(crate) struct Refill {
     pub(crate) at: String,
@@ -486,6 +562,23 @@ impl ContextDev {
         .await
     }
 
+    /// Google Maps search through the prebuilt parser (channel 3). Its cost is
+    /// not documented: one credit is assumed for the cap, the real charge is counted.
+    pub(crate) async fn scrape_maps(&self, query: &str) -> Result<Vec<MapsPlace>, ContextError> {
+        let body = serde_json::json!({
+            "url": maps_search_url(query),
+            "formats": { "parse": true },
+            "parseParams": { "type": "prebuilt", "parser": "google-maps" },
+            "timeoutOpts": { "milliseconds": SCRAPE_TIMEOUT_MS, "behavior": "fail" },
+        });
+        self.call(
+            1,
+            |http| http.post(format!("{BASE_URL}/web/scrape")).json(&body),
+            maps_places,
+        )
+        .await
+    }
+
     pub(crate) async fn usage(&self) -> Result<Usage, ContextError> {
         self.call(
             0,
@@ -500,6 +593,51 @@ impl ContextDev {
     }
 }
 
+/// Google Maps discovery: off until the spike shows it is precise and cheap enough.
+pub(crate) fn maps_enabled(db: &rusqlite::Connection) -> Result<bool, String> {
+    Ok(crate::ai_registry::load_setting(db, MAPS_KEY)?.as_deref() == Some("1"))
+}
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, Deserialize)]
+pub(crate) struct ContextDevSettings {
+    /// Requests in flight the plan allows (Free 2, Developer 10, Pro 100).
+    pub(crate) concurrency: usize,
+    pub(crate) maps_enabled: bool,
+}
+
+fn load_settings(db: &rusqlite::Connection) -> Result<ContextDevSettings, String> {
+    Ok(ContextDevSettings {
+        concurrency: concurrency(db)?,
+        maps_enabled: maps_enabled(db)?,
+    })
+}
+
+#[tauri::command]
+pub(crate) async fn get_contextdev_settings(
+    app: tauri::AppHandle,
+) -> Result<ContextDevSettings, String> {
+    crate::database::blocking(move || load_settings(&*crate::open_db(&app)?)).await
+}
+
+#[tauri::command]
+pub(crate) async fn set_contextdev_settings(
+    app: tauri::AppHandle,
+    settings: ContextDevSettings,
+) -> Result<ContextDevSettings, String> {
+    crate::database::blocking(move || {
+        let db = crate::open_db(&app)?;
+        let concurrency = settings.concurrency.clamp(1, MAX_CONCURRENCY).to_string();
+        crate::ai_registry::save_setting(&db, CONCURRENCY_KEY, &concurrency)?;
+        crate::ai_registry::save_setting(
+            &db,
+            MAPS_KEY,
+            if settings.maps_enabled { "1" } else { "0" },
+        )?;
+        load_settings(&db)
+    })
+    .await
+}
+
 fn env_key() -> Option<String> {
     std::env::var(ENV_KEY)
         .ok()
@@ -508,6 +646,7 @@ fn env_key() -> Option<String> {
 }
 
 const CONCURRENCY_KEY: &str = "contextdev_concurrency";
+const MAPS_KEY: &str = "contextdev_maps_enabled";
 /// The Free plan's limit; Developer allows 10, Pro 100.
 const DEFAULT_CONCURRENCY: usize = 2;
 const MAX_CONCURRENCY: usize = 100;
@@ -738,6 +877,27 @@ mod tests {
         client.note_status(401, Some(&ContextError::Unauthorized(String::new())));
         assert_eq!(client.stop_reason(), Some(ContextError::UsageExceeded));
         assert_eq!(client.refusal(0), Some(ContextError::UsageExceeded));
+    }
+
+    #[test]
+    fn contextdev_maps_parser_keeps_open_businesses_and_encodes_the_search() {
+        let body = r#"{"url":"u","parsed":{"type":"google-maps","requested":true,"success":true,
+            "data":{"results":[
+              {"place_id":"a","name":"Pro Loco Clusone","website":"https://prolococlusone.example.test/",
+               "google_category":["Associazione"],"city":"Clusone","postal_code":"24023","open_status":null},
+              {"place_id":"b","name":"Chiusa","website":null,"google_category":[],"city":"Clusone",
+               "open_status":"PERMANENTLY_CLOSED"}]}}}"#;
+        let places = maps_places(body).unwrap();
+        assert_eq!(places.len(), 1);
+        assert_eq!(places[0].city.as_deref(), Some("Clusone"));
+        assert_eq!(places[0].google_category, ["Associazione"]);
+        let failed = r#"{"parsed":{"type":"google-maps","requested":true,"success":false,"data":null,
+            "error_code":"WEBSITE_BLOCKED","message":"m"}}"#;
+        assert!(matches!(maps_places(failed), Err(ContextError::Failed(_))));
+        assert_eq!(
+            maps_search_url("Pro Loco Sant'Omobono"),
+            "https://www.google.com/maps/search/Pro+Loco+Sant%27Omobono/"
+        );
     }
 
     #[test]

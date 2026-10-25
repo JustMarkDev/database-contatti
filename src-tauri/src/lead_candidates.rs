@@ -9,7 +9,7 @@
 //! (`Scoperta: <canale>`), and each discovery records its credits as a
 //! `discovery` run, so the yield of a channel can be measured.
 
-use crate::contextdev::{ContextDev, SearchHit};
+use crate::contextdev::{ContextDev, MapsPlace, SearchHit};
 use crate::discovery::{LeadContext, RunRecord, create_run, finish_run, url_host};
 use crate::lead_crawl::{
     SeedRow, insert_seeds_with_status, is_provider_domain, normalize_seed_url,
@@ -21,6 +21,7 @@ use std::collections::{HashMap, HashSet};
 
 pub(crate) const CHANNEL_LINKS: &str = "Scoperta: link in uscita";
 pub(crate) const CHANNEL_SEARCH: &str = "Scoperta: ricerca web";
+pub(crate) const CHANNEL_MAPS: &str = "Scoperta: Google Maps";
 /// Credits spent finding the site of organizations known only by name.
 pub(crate) const CHANNEL_FIND_SITES: &str = "Scoperta: trova siti";
 const MAX_SEARCH_QUERIES: usize = 120;
@@ -453,6 +454,70 @@ pub(crate) fn hit_matches_entity(name: &str, comune: &str, hit: &SearchHit) -> b
         .any(|word| words.contains(word))
 }
 
+fn maps_enabled(app: &tauri::AppHandle) -> Result<bool, String> {
+    crate::contextdev::maps_enabled(&*open_db(app)?)
+}
+
+/// Channel 3a: Google Maps searches (off by default) into new seeds. A place's
+/// city is structured, so it becomes the seed's comune.
+#[tauri::command]
+pub(crate) async fn discover_by_maps(
+    app: tauri::AppHandle,
+    request: SearchDiscoveryRequest,
+) -> Result<DiscoveryReport, String> {
+    let enabled = crate::database::blocking({
+        let app = app.clone();
+        move || maps_enabled(&app)
+    })
+    .await?;
+    if !enabled {
+        return Err("Attiva Google Maps nelle Impostazioni per usarlo.".to_owned());
+    }
+    let queries = search_queries(&request);
+    if queries.is_empty() {
+        return Err("Scrivi cosa cercare o scegli sottocategoria e regione.".to_owned());
+    }
+    let _job = crate::lead_crawl::start_job()?;
+    let budget = (request.max_credits > 0).then_some(request.max_credits);
+    let context = crate::lead_crawl::open_context(&app, budget).await?;
+    let mut candidates = Vec::new();
+    let mut errors = Vec::new();
+    for query in &queries {
+        if crate::lead_crawl::cancelled() {
+            break;
+        }
+        match context.scrape_maps(query).await {
+            Ok(places) => candidates.extend(places.into_iter().filter_map(|place| {
+                Some(Candidate {
+                    url: place.website?,
+                    name: place.name,
+                    description: Some(place.google_category.join(", ")),
+                    context: LeadContext {
+                        comune: place.city,
+                        address: place.address,
+                        postal_code: place.postal_code,
+                        ..LeadContext::default()
+                    },
+                    hint: request.category.clone(),
+                })
+            })),
+            Err(error) => {
+                errors.push(format!("{query}: {error}"));
+                if context.stop_reason().is_some() {
+                    break;
+                }
+            }
+        }
+    }
+    let mut report = accept_candidates(&app, CHANNEL_MAPS, candidates).await?;
+    report.credits = context.credits_used();
+    crate::database::blocking(move || {
+        record_discovery(&*open_db(&app)?, CHANNEL_MAPS, &report, &errors)
+    })
+    .await?;
+    Ok(report)
+}
+
 /// What `find_seed_sites` decides for one organization: the site to read,
 /// a site to verify, or nothing found.
 #[derive(Debug, PartialEq)]
@@ -476,6 +541,67 @@ pub(crate) fn choose_site(name: &str, comune: &str, hits: &[SearchHit]) -> SiteM
     usable.first().map_or(SiteMatch::NotFound, |hit| {
         SiteMatch::ToVerify(hit.url.clone())
     })
+}
+
+/// Maps check is structural: the place's city must be the organization's
+/// comune and its name must share a significant word with the known name.
+pub(crate) fn choose_maps_site(name: &str, comune: &str, places: &[MapsPlace]) -> SiteMatch {
+    let with_site: Vec<&MapsPlace> = places
+        .iter()
+        .filter(|place| {
+            place
+                .website
+                .as_deref()
+                .and_then(url_host)
+                .is_some_and(|host| !is_unwanted(&host))
+        })
+        .collect();
+    let comune = crate::gazetteer::norm(comune);
+    let matching = with_site.iter().find(|place| {
+        let city = crate::gazetteer::norm(place.city.as_deref().unwrap_or(""));
+        let as_hit = SearchHit {
+            url: String::new(),
+            title: place.name.clone().unwrap_or_default(),
+            description: String::new(),
+        };
+        !comune.is_empty() && city == comune && hit_matches_entity(name, "", &as_hit)
+    });
+    match (matching, with_site.first()) {
+        (Some(place), _) => SiteMatch::Found(place.website.clone().unwrap_or_default()),
+        (None, Some(place)) => SiteMatch::ToVerify(place.website.clone().unwrap_or_default()),
+        (None, None) => SiteMatch::NotFound,
+    }
+}
+
+/// Channel 3b: the site of organizations known only by name, through Google
+/// Maps when it is enabled, otherwise web search.
+pub(crate) async fn find_sites(
+    app: &tauri::AppHandle,
+    context: &ContextDev,
+    pending: &[(String, String, String)],
+) -> Result<(Vec<(String, SiteMatch)>, Vec<String>), String> {
+    let use_maps = crate::database::blocking({
+        let app = app.clone();
+        move || maps_enabled(&app)
+    })
+    .await?;
+    if !use_maps {
+        return Ok(find_sites_by_search(context, pending).await);
+    }
+    let mut found = Vec::new();
+    let mut errors = Vec::new();
+    for (id, name, comune) in pending {
+        if crate::lead_crawl::cancelled() || context.stop_reason().is_some() {
+            break;
+        }
+        let query = format!("{name} {comune}").trim().to_owned();
+        match context.scrape_maps(&query).await {
+            Ok(places) => found.push((id.clone(), choose_maps_site(name, comune, &places))),
+            Err(error) if error.is_site_error() => found.push((id.clone(), SiteMatch::NotFound)),
+            Err(error) => errors.push(format!("{query}: {error}")),
+        }
+    }
+    Ok((found, errors))
 }
 
 /// Channel 3b (web search): the site of organizations known only by name,
@@ -670,6 +796,42 @@ mod tests {
             "",
             &hit("https://x.example.test", "Sant'Alessandro in Colonna", "")
         ));
+    }
+
+    #[test]
+    fn lead_candidates_maps_accepts_a_place_only_in_the_same_comune() {
+        let place = |name: &str, city: &str, website: &str| MapsPlace {
+            name: Some(name.to_owned()),
+            city: Some(city.to_owned()),
+            website: Some(website.to_owned()),
+            ..MapsPlace::default()
+        };
+        let places = [
+            place(
+                "Pro Loco Clusone",
+                "Rovetta",
+                "https://rovetta.example.test/",
+            ),
+            place(
+                "Pro Loco Clusone",
+                "Clusone",
+                "https://prolococlusone.example.test/",
+            ),
+        ];
+        assert_eq!(
+            choose_maps_site("Pro Loco Clusone", "Clusone", &places),
+            SiteMatch::Found("https://prolococlusone.example.test/".to_owned())
+        );
+        assert_eq!(
+            choose_maps_site("Pro Loco Clusone", "Clusone", &places[..1]),
+            SiteMatch::ToVerify("https://rovetta.example.test/".to_owned())
+        );
+        // Without the comune the city cannot be checked.
+        assert!(matches!(
+            choose_maps_site("Pro Loco Clusone", "", &places),
+            SiteMatch::ToVerify(_)
+        ));
+        assert_eq!(choose_maps_site("x", "Clusone", &[]), SiteMatch::NotFound);
     }
 
     #[test]

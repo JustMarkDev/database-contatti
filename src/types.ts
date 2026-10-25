@@ -207,6 +207,11 @@ export type SeedListView = {
   /** Not confidently classified or not confirmed: stored, never read. */
   to_verify: number;
 };
+export type ContextDevSettings = {
+  /** Requests in flight the plan allows (Free 2, Developer 10, Pro 100). */
+  concurrency: number;
+  maps_enabled: boolean;
+};
 export type DiscoveryReport = {
   found: number;
   known: number;

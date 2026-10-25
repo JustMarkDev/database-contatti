@@ -1178,9 +1178,10 @@ pub(crate) async fn explore_directory(
     .await
 }
 
-/// Find the website of organizations known only by name: context.dev Search
-/// `<name> <comune>`, kept only when the result names the comune or the
-/// organization (§8 of the plan); otherwise the site waits as `verifica`.
+/// Find the website of organizations known only by name, `<name> <comune>`:
+/// Google Maps when enabled (the place's city must be the comune), otherwise
+/// context.dev Search (the result must name the comune or the organization,
+/// §8 of the plan). A site that does not pass waits as `verifica`.
 #[tauri::command]
 pub(crate) async fn find_seed_sites(
     app: tauri::AppHandle,
@@ -1218,7 +1219,7 @@ pub(crate) async fn find_seed_sites(
     }
     let _job = start_job()?;
     let context = open_context(&app, None).await?;
-    let (found, errors) = crate::lead_candidates::find_sites_by_search(&context, &pending).await;
+    let (found, errors) = crate::lead_candidates::find_sites(&app, &context, &pending).await?;
     let report = crate::lead_candidates::DiscoveryReport {
         found: found.len(),
         credits: context.credits_used(),

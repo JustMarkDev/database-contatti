@@ -193,6 +193,8 @@ function defaultInvoke(command: string) {
       configured: true,
       from_env: true,
     });
+  if (command === "get_contextdev_settings")
+    return Promise.resolve({ concurrency: 2, maps_enabled: false });
   if (command === "list_deterministic_catalogs") return Promise.resolve([]);
   if (command === "list_ai_run_failures") return Promise.resolve([]);
   if (command === "list_ai_runs") return Promise.resolve([]);
@@ -1226,6 +1228,25 @@ describe("App orchestration", () => {
     expect(invoke).toHaveBeenCalledWith("set_contextdev_api_key", { apiKey: "cd-key" });
     expect(await within(form.parentElement!).findByText("Chiave configurata")).toBeInTheDocument();
     expect(screen.getByLabelText("Chiave API context.dev")).toHaveValue("");
+  });
+
+  it("turns Google Maps discovery on from Settings", async () => {
+    invoke.mockImplementation((command: string, args?: { settings?: unknown }) => {
+      if (command === "set_contextdev_settings") return Promise.resolve(args?.settings);
+      return defaultInvoke(command);
+    });
+    render(<App />);
+    await screen.findByText("info@example.it");
+    await userEvent.click(screen.getByTitle("Impostazioni"));
+    const maps = await screen.findByLabelText(
+      "Cerca i siti anche su Google Maps (costo da misurare)",
+    );
+    expect(maps).not.toBeChecked();
+    await userEvent.click(maps);
+    expect(invoke).toHaveBeenCalledWith("set_contextdev_settings", {
+      settings: { concurrency: 2, maps_enabled: true },
+    });
+    await waitFor(() => expect(maps).toBeChecked());
   });
 
   it("gates blacklist clearing behind two confirmations", async () => {

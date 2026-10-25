@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ContextDevSettings,
   DiscoveryReport,
   LeadFilterOptions,
   LeadFilters,
@@ -107,6 +108,15 @@ export type SearchDiscoveryRequest = {
 /** context.dev web search: new sites, filtered and classified, become seeds in "Scoperta: ricerca web". */
 export const discoverBySearch = (request: SearchDiscoveryRequest) =>
   invoke<DiscoveryReport>("discover_by_search", { request });
+
+/** Google Maps searches (off unless enabled in Settings): businesses with a site become seeds. */
+export const discoverByMaps = (request: SearchDiscoveryRequest) =>
+  invoke<DiscoveryReport>("discover_by_maps", { request });
+
+export const getContextdevSettings = () => invoke<ContextDevSettings>("get_contextdev_settings");
+
+export const setContextdevSettings = (settings: ContextDevSettings) =>
+  invoke<ContextDevSettings>("set_contextdev_settings", { settings });
 
 /** Finds the site of organizations known only by name; returns how many can now be read. */
 export const findSeedSites = (listName: string | null, limit: number) =>
