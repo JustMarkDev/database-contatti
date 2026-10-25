@@ -5,8 +5,6 @@ import {
   cancelAiClassification,
   detectOpencode,
   detectTypesafe,
-  getTypesafeApiKey,
-  setTypesafeApiKey,
   getResumableAiRun,
   listAiFieldChanges,
   listAiRuns,
@@ -19,8 +17,8 @@ import {
 import { platform } from "../platform";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardHeader } from "../components/ui/card";
-import { Input } from "../components/ui/input";
 import { Icon } from "../components/Icon";
+import { withOpenCodePrefs } from "../features/opencodePrefs";
 import { Progress } from "../components/ui/progress";
 import type {
   AiFieldChange,
@@ -29,7 +27,6 @@ import type {
   AiStartRequest,
   OpenCodeStatus,
   Review,
-  TypeSafeKeyView,
   TypeSafeStatus,
 } from "../types";
 
@@ -173,9 +170,7 @@ function changeToActivity(change: AiFieldChange): ActivityEntry | null {
 export function AiPage({ active, onContactsChanged, onReviewCount, sharedDatabaseTotal }: Props) {
   const [opencode, setOpencode] = useState<OpenCodeStatus | null>(null);
   const [typesafe, setTypesafe] = useState<TypeSafeStatus | null>(null);
-  const [typesafeKey, setTypesafeKey] = useState<TypeSafeKeyView | null>(null);
   const [availabilityLoading, setAvailabilityLoading] = useState(true);
-  const [typesafeKeyDraft, setTypesafeKeyDraft] = useState("");
   const [progress, setProgress] = useState<AiProgress | null>(null);
   const [run, setRun] = useState<AiRun | null>(null);
   const [activity, setActivity] = useState<ActivityEntry[]>([]);
@@ -306,11 +301,6 @@ export function AiPage({ active, onContactsChanged, onReviewCount, sharedDatabas
             if (!cancelled) setOpencode(value);
           })
           .catch(() => {}),
-        getTypesafeApiKey()
-          .then((value) => {
-            if (!cancelled) setTypesafeKey(value);
-          })
-          .catch(() => {}),
       ];
       void Promise.all(pending).then(() => {
         if (!cancelled) setAvailabilityLoading(false);
@@ -322,7 +312,7 @@ export function AiPage({ active, onContactsChanged, onReviewCount, sharedDatabas
       cancelled = true;
       window.clearInterval(interval);
     };
-  }, [active, detectOpencode, detectTypesafe, getTypesafeApiKey]);
+  }, [active, detectOpencode, detectTypesafe]);
 
   const providerAvailable = (typesafe?.available ?? false) && (opencode?.available ?? false);
 
@@ -454,7 +444,7 @@ export function AiPage({ active, onContactsChanged, onReviewCount, sharedDatabas
     ]);
     try {
       window.setTimeout(() => void refreshLifecycle(), 50);
-      await startAiClassification(CASCADE_REQUEST);
+      await startAiClassification(withOpenCodePrefs(CASCADE_REQUEST));
       await refresh();
       await refreshLifecycle();
     } catch (error) {
@@ -531,19 +521,6 @@ export function AiPage({ active, onContactsChanged, onReviewCount, sharedDatabas
     }
   }
 
-  async function saveKey() {
-    try {
-      const saved = await setTypesafeApiKey(typesafeKeyDraft.trim());
-      setTypesafeKey(saved);
-      setTypesafeKeyDraft("");
-      const status = await detectTypesafe();
-      setTypesafe(status);
-      toast.success("Chiave TypeSafe salvata.");
-    } catch (error) {
-      toast.error(String(error));
-    }
-  }
-
   const primaryDisabled =
     Boolean(pendingAction) ||
     (!runActive && !runPaused && !providerAvailable) ||
@@ -589,25 +566,6 @@ export function AiPage({ active, onContactsChanged, onReviewCount, sharedDatabas
 
       <Card className="island-section ai-panel" aria-label="Arricchimento">
         <CardContent className="flex flex-col gap-4">
-          {availabilityLoading ? (
-            <p role="status">Verifica disponibilità…</p>
-          ) : (
-            (!typesafeKey?.configured || !typesafe?.available) && (
-              <div className="inline-form">
-                <Input
-                  aria-label="Chiave API TypeSafe"
-                  type="password"
-                  value={typesafeKeyDraft}
-                  onChange={(event) => setTypesafeKeyDraft(event.target.value)}
-                  placeholder="Chiave API TypeSafe"
-                />
-                <Button onClick={() => void saveKey()} disabled={!typesafeKeyDraft.trim()}>
-                  Salva chiave
-                </Button>
-              </div>
-            )
-          )}
-
           <div className="ai-control-row">
             <div className="actions-row">
               <Button onClick={() => void onPrimary()} disabled={primaryDisabled}>
@@ -631,8 +589,8 @@ export function AiPage({ active, onContactsChanged, onReviewCount, sharedDatabas
             {!availabilityLoading && !providerAvailable && (
               <p className="ai-provider-status is-down" role="status">
                 {!typesafe?.available
-                  ? `Jev non pronto${typesafe?.error ? `: ${typesafe.error}` : ""}`
-                  : `OpenCode non pronto${opencode?.error ? `: ${opencode.error}` : ""}`}
+                  ? `Jev non pronto${typesafe?.error ? `: ${typesafe.error}` : ""} (vedi Impostazioni)`
+                  : `OpenCode non pronto${opencode?.error ? `: ${opencode.error}` : ""} (vedi Impostazioni)`}
               </p>
             )}
             {!availabilityLoading && providerAvailable && opencode?.version && (

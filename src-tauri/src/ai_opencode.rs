@@ -109,16 +109,30 @@ pub(crate) fn auth_output_authenticated(stdout: &str) -> bool {
         || lower.contains("no authenticated integrations"))
 }
 
-fn list_models(binary: &PathBuf) -> Vec<OpenCodeModelInfo> {
-    match Command::new(binary)
-        .args(["models", "--standalone"])
-        .output()
-    {
-        Ok(output) if output.status.success() => {
-            parse_models_plain(&String::from_utf8_lossy(&output.stdout))
+fn list_models(binary: &PathBuf) -> Result<Vec<OpenCodeModelInfo>, String> {
+    // OpenCode 2.0.x prints nothing for `models --standalone` (exit 0), so retry without it.
+    let mut last_error = None;
+    for args in [&["models", "--standalone"][..], &["models"][..]] {
+        let output = Command::new(binary)
+            .args(args)
+            .stdin(Stdio::null())
+            .output()
+            .map_err(|error| format!("impossibile avviare `opencode models`: {error}"))?;
+        if !output.status.success() {
+            let stderr = String::from_utf8_lossy(&output.stderr);
+            let detail = stderr.trim().lines().last().unwrap_or("nessun dettaglio");
+            last_error = Some(format!(
+                "`opencode models` è fallito ({}): {detail}",
+                output.status
+            ));
+            continue;
         }
-        _ => Vec::new(),
+        let models = parse_models_plain(&String::from_utf8_lossy(&output.stdout));
+        if !models.is_empty() {
+            return Ok(models);
+        }
     }
+    last_error.map_or_else(|| Ok(Vec::new()), Err)
 }
 
 fn check_authenticated(binary: &PathBuf) -> bool {
@@ -144,7 +158,10 @@ fn inspect_opencode() -> OpenCodeStatus {
         };
     };
     let version = read_version(&binary);
-    let models = list_models(&binary);
+    let (models, models_error) = match list_models(&binary) {
+        Ok(models) => (models, None),
+        Err(error) => (Vec::new(), Some(error)),
+    };
     let authenticated = check_authenticated(&binary);
     let selected_model = models
         .iter()
@@ -162,7 +179,9 @@ fn inspect_opencode() -> OpenCodeStatus {
                 .map(str::to_owned)
                 .or_else(|| model.variants.first().cloned())
         });
-    let error = if models.is_empty() {
+    let error = if let Some(error) = models_error {
+        Some(error)
+    } else if models.is_empty() {
         Some("Nessun modello OpenCode disponibile".to_owned())
     } else if !authenticated {
         Some("OpenCode non risulta autenticato (`opencode auth login`)".to_owned())
