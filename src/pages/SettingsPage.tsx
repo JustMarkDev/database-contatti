@@ -1,19 +1,39 @@
+import { useCallback, useEffect, useState } from "react";
 import { HugeiconsIcon } from "@hugeicons/react";
 import {
   AlertDiamondIcon,
   DatabaseIcon,
   Download01Icon,
+  Refresh01Icon,
+  SparklesIcon,
   Upload01Icon,
 } from "@hugeicons/core-free-icons";
+import { detectOpencode, detectTypesafe, getTypesafeApiKey, setTypesafeApiKey } from "../api/ai";
 import { exportDatabaseBackup, importDatabaseBackup } from "../api/backup";
 import { clearBlacklist } from "../api/blacklist";
 import { clearContacts, refreshDashboard } from "../api/contacts";
+import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
 import { confirmDialog } from "../components/ui/confirm-dialog";
+import { Input } from "../components/ui/input";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "../components/ui/select";
+import {
+  EFFORT_LEVELS,
+  loadOpenCodePrefs,
+  saveOpenCodePrefs,
+  type OpenCodePrefs,
+} from "../features/opencodePrefs";
 import { toast } from "../components/ui/toast";
 import { emptyFilters } from "../features/filters";
 import { platform } from "../platform";
+import type { OpenCodeStatus, TypeSafeKeyView, TypeSafeStatus } from "../types";
 
 type Props = {
   active: boolean;
@@ -49,6 +69,220 @@ async function confirmDestructiveAction(kind: "database" | "blacklist") {
     cancelLabel: "Annulla",
     variant: "destructive",
   });
+}
+
+function ProviderRow({
+  name,
+  badges,
+  error,
+  children,
+}: {
+  name: string;
+  badges: { label: string; ok: boolean }[];
+  error?: string | null;
+  children?: React.ReactNode;
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-md border border-border-soft p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <strong className="text-sm">{name}</strong>
+        {badges.map((badge) => (
+          <Badge key={badge.label} variant={badge.ok ? "default" : "warning"}>
+            {badge.label}
+          </Badge>
+        ))}
+      </div>
+      {error && <p className="m-0 text-sm text-muted-foreground">{error}</p>}
+      {children}
+    </div>
+  );
+}
+
+function ProvidersCard({ active }: { active: boolean }) {
+  const [opencode, setOpencode] = useState<OpenCodeStatus | null>(null);
+  const [typesafe, setTypesafe] = useState<TypeSafeStatus | null>(null);
+  const [key, setKey] = useState<TypeSafeKeyView | null>(null);
+  const [draft, setDraft] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [prefs, setPrefs] = useState<OpenCodePrefs>(loadOpenCodePrefs);
+
+  function updatePrefs(next: OpenCodePrefs) {
+    setPrefs(next);
+    saveOpenCodePrefs(next);
+  }
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    await Promise.all([
+      detectOpencode().then(setOpencode, () => setOpencode(null)),
+      detectTypesafe().then(setTypesafe, () => setTypesafe(null)),
+      getTypesafeApiKey().then(setKey, () => setKey(null)),
+    ]);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (active) void refresh();
+  }, [active, refresh]);
+
+  async function saveKey(value: string) {
+    try {
+      setKey(await setTypesafeApiKey(value));
+      setDraft("");
+      setTypesafe(await detectTypesafe());
+      toast.success(value ? "Chiave Jev salvata." : "Chiave Jev rimossa.");
+    } catch (error) {
+      toast.error(String(error));
+    }
+  }
+
+  return (
+    <Card className="island-section settings-panel">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <HugeiconsIcon
+            icon={SparklesIcon}
+            size={20}
+            strokeWidth={1.75}
+            color="currentColor"
+            className="size-5 text-brand"
+          />
+          <span>Provider IA</span>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            className="ml-auto"
+            onClick={() => void refresh()}
+            disabled={loading}
+          >
+            <HugeiconsIcon
+              icon={Refresh01Icon}
+              size={16}
+              strokeWidth={1.75}
+              color="currentColor"
+              className="size-4"
+            />
+            {loading ? "Verifica…" : "Ricontrolla"}
+          </Button>
+        </CardTitle>
+        <CardDescription>
+          Stato dei provider usati per la classificazione. Le chiavi restano sul tuo computer.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <ProviderRow
+          name="OpenCode"
+          error={opencode?.error}
+          badges={
+            opencode
+              ? [
+                  {
+                    label: opencode.installed ? "Installato" : "Non installato",
+                    ok: opencode.installed,
+                  },
+                  ...(opencode.version ? [{ label: `v${opencode.version}`, ok: true }] : []),
+                  {
+                    label: opencode.authenticated ? "Autenticato" : "Non autenticato",
+                    ok: opencode.authenticated,
+                  },
+                  { label: `${opencode.models.length} modelli`, ok: opencode.models.length > 0 },
+                ]
+              : []
+          }
+        >
+          {opencode && opencode.models.length > 0 && (
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-1 text-sm">
+                Modello
+                <Select
+                  value={prefs.model ?? opencode.selected_model}
+                  onValueChange={(model) => updatePrefs({ ...prefs, model: model as string })}
+                >
+                  <SelectTrigger aria-label="Modello OpenCode">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {opencode.models.map((model) => (
+                      <SelectItem key={model.id} value={model.id}>
+                        {model.id}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                Effort
+                <Select
+                  value={prefs.effort ?? "default"}
+                  onValueChange={(effort) =>
+                    updatePrefs({
+                      ...prefs,
+                      effort: effort === "default" ? null : (effort as string),
+                    })
+                  }
+                >
+                  <SelectTrigger aria-label="Effort OpenCode">
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    {["default", ...EFFORT_LEVELS].map((level) => (
+                      <SelectItem key={level} value={level}>
+                        {level === "default" ? "Predefinito (xhigh)" : level}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+              </label>
+            </div>
+          )}
+        </ProviderRow>
+        <ProviderRow
+          name="Jev (TypeSafe)"
+          error={typesafe?.error}
+          badges={
+            typesafe
+              ? [
+                  {
+                    label: key?.configured ? "Chiave configurata" : "Chiave mancante",
+                    ok: Boolean(key?.configured),
+                  },
+                  ...(key?.from_env ? [{ label: "Da TYPESAFE_API_KEY", ok: true }] : []),
+                  { label: typesafe.available ? "Pronto" : "Non pronto", ok: typesafe.available },
+                ]
+              : []
+          }
+        >
+          <form
+            className="inline-form"
+            onSubmit={(event) => {
+              event.preventDefault();
+              void saveKey(draft.trim());
+            }}
+          >
+            <Input
+              aria-label="Chiave API TypeSafe"
+              type="password"
+              autoComplete="off"
+              value={draft}
+              onChange={(event) => setDraft(event.target.value)}
+              placeholder={
+                key?.configured ? "Sostituisci la chiave API TypeSafe" : "Chiave API TypeSafe"
+              }
+            />
+            <Button type="submit" disabled={!draft.trim()}>
+              Salva chiave
+            </Button>
+            {key?.configured && !key.from_env && (
+              <Button type="button" variant="outline" onClick={() => void saveKey("")}>
+                Rimuovi
+              </Button>
+            )}
+          </form>
+        </ProviderRow>
+      </CardContent>
+    </Card>
+  );
 }
 
 export function SettingsPage({
@@ -196,7 +430,7 @@ export function SettingsPage({
           <div>
             <h1>Impostazioni</h1>
             <p className="topbar-description">
-              Backup, ripristino e manutenzione dell'archivio locale.
+              Provider IA, backup, ripristino e manutenzione dell'archivio locale.
             </p>
           </div>
         </header>
@@ -255,6 +489,8 @@ export function SettingsPage({
           </div>
         </CardContent>
       </Card>
+
+      <ProvidersCard active={active} />
 
       <Card className="island-section settings-panel">
         <details>
