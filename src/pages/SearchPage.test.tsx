@@ -137,14 +137,17 @@ const low = makeLead("low");
 
 function defaultInvoke(command: string): Promise<unknown> {
   switch (command) {
-    case "get_tinyfish_api_key":
-    case "set_tinyfish_api_key":
-      return Promise.resolve({ configured: true, from_env: false });
-    case "find_seed_urls":
-      return Promise.resolve([
-        "https://www.scuola.example.test/",
-        "https://ic.example.test/bullismo",
-      ]);
+    case "discover_by_search":
+      return Promise.resolve({
+        found: 4,
+        known: 1,
+        rejected: 0,
+        accepted: 2,
+        to_verify: 1,
+        credits: 3,
+      });
+    case "find_seed_sites":
+      return Promise.resolve(3);
     case "list_lead_sources":
       return Promise.resolve(catalog);
     case "list_lead_taxonomy":
@@ -167,7 +170,15 @@ function defaultInvoke(command: string): Promise<unknown> {
       ]);
     case "list_seed_lists":
       return Promise.resolve([
-        { list_name: "Fonte: OSM", total: 5, pending: 3, crawled: 1, failed: 0, without_site: 1 },
+        {
+          list_name: "Fonte: OSM",
+          total: 5,
+          pending: 3,
+          crawled: 1,
+          failed: 0,
+          without_site: 1,
+          to_verify: 0,
+        },
       ]);
     case "get_lead_filter_options":
       return Promise.resolve({
@@ -182,7 +193,6 @@ function defaultInvoke(command: string): Promise<unknown> {
       });
     case "import_lead_source":
       return Promise.resolve({ ...run, run_id: "run-src", page_count: 0 });
-    case "start_search_run":
     case "explore_seeds":
     case "explore_directory":
       return Promise.resolve(run);
@@ -393,15 +403,29 @@ describe("SearchPage", () => {
       "tutte le pro loco della Lombardia",
     );
     await userEvent.click(screen.getByRole("button", { name: "Cerca" }));
+    const scoped = {
+      category: "Turismo e promozione territoriale",
+      subcategory: "Pro Loco",
+      regione: "Lombardia",
+      limit: 50,
+      maxPages: 3,
+      maxPdfs: 0,
+      useAi: true,
+    };
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("start_search_run", {
-        query: "tutte le pro loco della Lombardia",
-        seedUrls: ["https://www.scuola.example.test/", "https://ic.example.test/bullismo"],
-        maxPagesPerDomain: 3,
-        maxPdfs: 0,
-        useAi: true,
+      expect(invoke).toHaveBeenCalledWith("explore_seeds", {
+        request: { listName: "Scoperta: ricerca web", ...scoped },
       }),
     );
+    expect(invoke).toHaveBeenCalledWith("discover_by_search", {
+      request: {
+        query: "pro loco Lombardia email",
+        category: "Turismo e promozione territoriale",
+        subcategory: "Pro Loco",
+        regione: "Lombardia",
+      },
+    });
+    expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining("2 siti nuovi"));
     expect(invoke).toHaveBeenCalledWith("plan_lead_request", {
       request: "tutte le pro loco della Lombardia",
     });
@@ -410,39 +434,40 @@ describe("SearchPage", () => {
       request: { sourceId: "dir-cai", useAi: true },
     });
     expect(invoke).toHaveBeenCalledWith("explore_seeds", {
-      request: {
-        listName: null,
-        category: "Turismo e promozione territoriale",
-        subcategory: "Pro Loco",
-        regione: "Lombardia",
-        limit: 50,
-        maxPages: 3,
-        maxPdfs: 0,
-        useAi: true,
-      },
+      request: { listName: null, ...scoped },
     });
-    expect(invoke).toHaveBeenCalledWith("find_seed_urls", { query: "pro loco Lombardia email" });
   });
 
-  it("still runs the planned sources without a TinyFish key and offers the key form", async () => {
+  it("does not read the search list when the web search finds no new site", async () => {
     invoke.mockImplementation((command: string) => {
-      if (command === "get_tinyfish_api_key") {
-        return Promise.resolve({ configured: false, from_env: false });
+      if (command === "discover_by_search") {
+        return Promise.resolve({
+          found: 2,
+          known: 2,
+          rejected: 0,
+          accepted: 0,
+          to_verify: 0,
+          credits: 1,
+        });
       }
       return command === "plan_lead_request" ? Promise.resolve(plan) : defaultInvoke(command);
     });
     await renderPage("Ricerca web");
     await userEvent.type(screen.getByLabelText("Descrizione della ricerca lead"), "pro loco");
     await userEvent.click(screen.getByRole("button", { name: "Cerca" }));
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+    expect(invoke).not.toHaveBeenCalledWith("explore_seeds", {
+      request: expect.objectContaining({ listName: "Scoperta: ricerca web" }),
+    });
+  });
+
+  it("finds the sites of organizations known only by name", async () => {
+    await renderPage("Ricerca web");
+    await userEvent.click(screen.getByRole("button", { name: "Trova i siti di Fonte: OSM" }));
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("import_lead_source", { sourceId: "miur-statali" }),
+      expect(invoke).toHaveBeenCalledWith("find_seed_sites", { listName: "Fonte: OSM", limit: 50 }),
     );
-    expect(invoke).not.toHaveBeenCalledWith("find_seed_urls", expect.anything());
-    await userEvent.type(screen.getByLabelText("Chiave API TinyFish"), " tf-key ");
-    await userEvent.click(screen.getByRole("button", { name: "Salva chiave" }));
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("set_tinyfish_api_key", { apiKey: "tf-key" }),
-    );
+    expect(toastSuccess).toHaveBeenCalledWith("Fonte: OSM: 3 siti trovati da leggere");
   });
 
   it("warns about the tables of an import that did not load", async () => {

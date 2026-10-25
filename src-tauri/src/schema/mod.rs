@@ -82,6 +82,7 @@ const MIGRATION_NAMES: [&str; LATEST_SCHEMA_VERSION as usize] = [
     "contact-score-without-confidence",
     "contact-score-richness",
     "promoted-contact-status",
+    "contextdev-credits",
 ];
 
 pub(crate) fn run_ordered_migrations(db: &Connection, fail_at: Option<i64>) -> Result<(), String> {
@@ -244,6 +245,7 @@ fn apply_migration(db: &Connection, version: i64) -> Result<(), String> {
         63 => migrate_contact_score_without_confidence(db),
         64 => migrate_contact_score_richness(db),
         65 => migrate_promoted_contact_status(db),
+        66 => migrate_contextdev_credits(db),
         _ => Err(format!("unknown migration {version}")),
     }
 }
@@ -273,7 +275,7 @@ pub(crate) fn setup_schema(db: &Connection) -> Result<(), String> {
     run_ordered_migrations(db, None)
 }
 
-pub(crate) const LATEST_SCHEMA_VERSION: i64 = 65;
+pub(crate) const LATEST_SCHEMA_VERSION: i64 = 66;
 
 pub(crate) const ACTIVE_TAXONOMY_VERSION: &str = "taxonomy-v1";
 

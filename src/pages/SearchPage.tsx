@@ -1,12 +1,12 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   cancelLeadCrawl,
+  discoverBySearch,
   exploreDirectory,
   exploreSeeds,
   exportSearchLeadsTxt,
-  findSeedUrls,
+  findSeedSites,
   getLeadFilterOptions,
-  getTinyfishApiKey,
   importLeadSource,
   listLeadSources,
   listSearchLeads,
@@ -14,8 +14,6 @@ import {
   listSearchRuns,
   listSeedLists,
   promoteSearchLeads,
-  setTinyfishApiKey,
-  startSearchRun,
 } from "../api/search";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
@@ -46,7 +44,6 @@ import type {
   SearchLeadView,
   SearchRunView,
   SeedListView,
-  TypeSafeKeyView,
 } from "../types";
 
 /**
@@ -63,6 +60,10 @@ const PAGES_PER_SITE = 3;
 /** PDFs per school site (role circolari); 0 keeps every run at ≤4 credits a site. */
 const MAX_PDFS = 0;
 const SITES_PER_RUN = 50;
+/** Organizations known only by name searched per click (one credit each). */
+const SITES_TO_FIND = 50;
+/** Where web-search discoveries land (`lead_candidates::CHANNEL_SEARCH`). */
+const SEARCH_LIST = "Scoperta: ricerca web";
 /** Every crawl reads pages with the IA: it is what finds roles, offices and places. */
 const USE_AI = true;
 
@@ -280,8 +281,6 @@ export function SearchPage({
 
   const [sources, setSources] = useState<LeadSource[] | null>(null);
   const [seedLists, setSeedLists] = useState<SeedListView[]>([]);
-  const [tinyfishKey, setTinyfishKey] = useState<TypeSafeKeyView | null>(null);
-  const [tinyfishKeyDraft, setTinyfishKeyDraft] = useState("");
 
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
@@ -332,12 +331,7 @@ export function SearchPage({
         .then((catalog) => mounted.current && setSources(sortLeadSources(catalog)))
         .catch(report);
     }
-    if (!tinyfishKey) {
-      void getTinyfishApiKey()
-        .then((view) => mounted.current && setTinyfishKey(view))
-        .catch(report);
-    }
-  }, [active, sources, tinyfishKey]);
+  }, [active, sources]);
 
   useEffect(() => {
     if (!active) return;
@@ -441,19 +435,17 @@ export function SearchPage({
         );
       }
       await attempt("Siti già raccolti", () => readList(null, plan));
-      if (tinyfishKey?.configured) {
-        await attempt("Ricerca sul web", async () => {
-          const urls = await findSeedUrls(plan.web_query);
-          if (urls.length === 0) return null;
-          return startSearchRun({
-            query: trimmed,
-            seedUrls: urls,
-            maxPagesPerDomain: PAGES_PER_SITE,
-            maxPdfs: MAX_PDFS,
-            useAi: USE_AI,
-          });
+      let newSites = 0;
+      await attempt("Ricerca sul web", async () => {
+        const report = await discoverBySearch({
+          query: plan.web_query,
+          category: plan.category,
+          subcategory: plan.subcategory,
+          regione: plan.regione,
         });
-      }
+        newSites = report.accepted;
+        return report.accepted > 0 ? readList(SEARCH_LIST, plan) : null;
+      });
       if (mounted.current) {
         setSearchText("");
         setFilters({
@@ -466,26 +458,19 @@ export function SearchPage({
       if (problems.length > 0) toast.error(problems.join(" · "));
       warnAboutErrors(totals.errors);
       if (totals.lead_count === 0 && totals.page_count === 0 && problems.length === 0) {
-        throw new Error(
-          tinyfishKey?.configured
-            ? "Nessun risultato per questa richiesta."
-            : "Nessuna fonte adatta: aggiungi la chiave TinyFish per cercare anche sul web.",
-        );
+        throw new Error("Nessun risultato per questa richiesta.");
       }
-      return `Ricerca conclusa: ${runMessage(totals)}`;
+      const found = newSites ? ` · ${newSites.toLocaleString("it-IT")} siti nuovi` : "";
+      return `Ricerca conclusa: ${runMessage(totals)}${found}`;
     });
   }
 
-  async function saveTinyfishKey() {
-    try {
-      const view = await setTinyfishApiKey(tinyfishKeyDraft.trim());
-      if (!mounted.current) return;
-      setTinyfishKey(view);
-      setTinyfishKeyDraft("");
-      toast.success("Chiave TinyFish salvata.");
-    } catch (caught) {
-      toast.error(String(caught));
-    }
+  /** Web search for the site of organizations known only by name, checked before reading. */
+  function findSites(list: SeedListView) {
+    void perform(`Ricerca dei siti di ${list.list_name}`, async () => {
+      const found = await findSeedSites(list.list_name, SITES_TO_FIND);
+      return `${list.list_name}: ${found.toLocaleString("it-IT")} siti trovati da leggere`;
+    });
   }
 
   function importSource(source: LeadSource) {
@@ -558,7 +543,9 @@ export function SearchPage({
       items.push({
         key: `list:${list.list_name}`,
         title: list.list_name,
-        meta: `${list.pending.toLocaleString("it-IT")} siti ancora da leggere`,
+        meta:
+          `${list.pending.toLocaleString("it-IT")} siti ancora da leggere` +
+          (list.to_verify ? ` · ${list.to_verify.toLocaleString("it-IT")} da verificare` : ""),
         run: () => readList(list.list_name),
       });
     }
@@ -829,24 +816,6 @@ export function SearchPage({
                   </Button>
                 </div>
               </div>
-              {tinyfishKey && !tinyfishKey.configured && (
-                <div className="inline-form">
-                  <Input
-                    aria-label="Chiave API TinyFish"
-                    type="password"
-                    value={tinyfishKeyDraft}
-                    onChange={(event) => setTinyfishKeyDraft(event.currentTarget.value)}
-                    placeholder="Chiave API TinyFish (ricerca web e pagine bloccate)"
-                  />
-                  <Button
-                    variant="outline"
-                    onClick={() => void saveTinyfishKey()}
-                    disabled={!tinyfishKeyDraft.trim()}
-                  >
-                    Salva chiave
-                  </Button>
-                </div>
-              )}
             </Panel>
 
             <Panel
@@ -877,6 +846,29 @@ export function SearchPage({
                 <Icon name="sparkle" size={16} className="size-4" />
                 Leggi i siti scelti
               </Button>
+              {seedLists.some((list) => list.without_site > 0) && (
+                <ul className="search-sources" aria-label="Enti senza sito">
+                  {seedLists
+                    .filter((list) => list.without_site > 0)
+                    .map((list) => (
+                      <SourceCard
+                        key={`find:${list.list_name}`}
+                        title={`${list.list_name}: enti senza sito`}
+                        note={`${list.without_site.toLocaleString("it-IT")} enti noti solo per nome: la ricerca web trova il sito e lo controlla prima di leggerlo`}
+                      >
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={() => findSites(list)}
+                          disabled={working}
+                          aria-label={`Trova i siti di ${list.list_name}`}
+                        >
+                          Trova i siti
+                        </Button>
+                      </SourceCard>
+                    ))}
+                </ul>
+              )}
             </Panel>
           </>
         )}

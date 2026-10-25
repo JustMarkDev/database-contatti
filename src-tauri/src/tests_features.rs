@@ -2706,13 +2706,13 @@ fn discovery_pages() -> Vec<FetchedPage> {
 
 #[test]
 fn search_discovery_migration_creates_tables_fresh_and_upgrades_from_v46() {
-    assert_eq!(LATEST_SCHEMA_VERSION, 65);
+    assert_eq!(LATEST_SCHEMA_VERSION, 66);
 
     let db = Connection::open_in_memory().unwrap();
     setup_schema(&db).unwrap();
     assert!(has_table(&db, "search_runs").unwrap());
     assert!(has_table(&db, "search_leads").unwrap());
-    assert_eq!(table_columns_for_test(&db, "search_runs").len(), 14);
+    assert_eq!(table_columns_for_test(&db, "search_runs").len(), 15);
     assert_eq!(table_columns_for_test(&db, "search_leads").len(), 22);
     let index_count: i64 = db
         .query_row(
@@ -3291,7 +3291,7 @@ fn lead_source_catalog_migration_upgrades_from_v47_keeping_sandbox_rows() {
     db.pragma_update(None, "user_version", 47).unwrap();
     migrate_database(&mut db, None, false).unwrap();
 
-    assert_eq!(table_columns_for_test(&db, "search_runs").len(), 14);
+    assert_eq!(table_columns_for_test(&db, "search_runs").len(), 15);
     assert_eq!(table_columns_for_test(&db, "search_leads").len(), 22);
     let (email, regione): (String, Option<String>) = db
         .query_row(

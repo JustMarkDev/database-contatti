@@ -275,6 +275,7 @@ pub(crate) struct ContextDev {
     http: reqwest::Client,
     key: String,
     slots: tokio::sync::Semaphore,
+    concurrency: usize,
     credits_used: AtomicU64,
     /// Credits this client may spend; `None` for no cap.
     budget: Option<u64>,
@@ -298,11 +299,17 @@ impl ContextDev {
                 .map_err(|error| error.to_string())?,
             key,
             slots: tokio::sync::Semaphore::new(concurrency.max(1)),
+            concurrency: concurrency.max(1),
             credits_used: AtomicU64::new(0),
             budget,
             halted: Mutex::new(None),
             bad_requests_in_a_row: AtomicU64::new(0),
         })
+    }
+
+    /// Requests in flight this client allows.
+    pub(crate) fn concurrency(&self) -> usize {
+        self.concurrency
     }
 
     /// Credits consumed by this client so far, failed calls included.

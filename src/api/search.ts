@@ -1,5 +1,6 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  DiscoveryReport,
   LeadFilterOptions,
   LeadFilters,
   LeadPlan,
@@ -14,8 +15,9 @@ import type {
 /**
  * Cerca lead API.
  *
- * Every import, directory and crawl writes to the sandbox (`search_leads`,
- * `search_seeds`). Promoting leads into `contacts` is a separate command.
+ * Every import, directory, discovery and crawl writes to the sandbox
+ * (`search_leads`, `search_seeds`). Promoting leads into `contacts` is a
+ * separate command. Sites are read through context.dev.
  */
 
 export type StartSearchRunInput = {
@@ -87,18 +89,28 @@ export const exploreDirectory = (request: DirectoryRequest) =>
 
 export const cancelLeadCrawl = () => invoke<void>("cancel_lead_crawl");
 
-export const getTinyfishApiKey = () => invoke<TypeSafeKeyView>("get_tinyfish_api_key");
-
-export const setTinyfishApiKey = (apiKey: string) =>
-  invoke<TypeSafeKeyView>("set_tinyfish_api_key", { apiKey });
-
 export const getContextdevApiKey = () => invoke<TypeSafeKeyView>("get_contextdev_api_key");
 
 export const setContextdevApiKey = (apiKey: string) =>
   invoke<TypeSafeKeyView>("set_contextdev_api_key", { apiKey });
 
-/** TinyFish web search: returns up to ten seed URLs, one per site. */
-export const findSeedUrls = (query: string) => invoke<string[]>("find_seed_urls", { query });
+export type SearchDiscoveryRequest = {
+  query?: string | null;
+  category?: string | null;
+  subcategory?: string | null;
+  regione?: string | null;
+  /** Searches at most (one context.dev credit each); the backend default when omitted. */
+  maxQueries?: number;
+  maxCredits?: number;
+};
+
+/** context.dev web search: new sites, filtered and classified, become seeds in "Scoperta: ricerca web". */
+export const discoverBySearch = (request: SearchDiscoveryRequest) =>
+  invoke<DiscoveryReport>("discover_by_search", { request });
+
+/** Finds the site of organizations known only by name; returns how many can now be read. */
+export const findSeedSites = (listName: string | null, limit: number) =>
+  invoke<number>("find_seed_sites", { listName, limit });
 
 export const exportSearchLeadsTxt = (filters: LeadFilters, path: string) =>
   invoke<SearchExportReport>("export_search_leads_txt", { filters, path });

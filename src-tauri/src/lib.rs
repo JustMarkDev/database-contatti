@@ -796,6 +796,7 @@ mod discovery;
 pub mod gazetteer;
 pub mod imports;
 mod lead_ai;
+mod lead_candidates;
 mod lead_crawl;
 mod lead_sources;
 pub mod mailbox_verification;
@@ -803,7 +804,6 @@ mod mcp;
 pub mod parsing;
 pub mod schema;
 pub mod taxonomy;
-mod tinyfish;
 
 pub(crate) use ai_enrichment::{
     load_ai_candidate, load_ai_candidate_ids, normalize_extracted_province,
@@ -873,9 +873,7 @@ pub fn run() {
             lead_crawl::plan_lead_request,
             lead_crawl::cancel_lead_crawl,
             lead_crawl::list_lead_taxonomy,
-            tinyfish::get_tinyfish_api_key,
-            tinyfish::set_tinyfish_api_key,
-            tinyfish::find_seed_urls,
+            lead_candidates::discover_by_search,
             contextdev::get_contextdev_api_key,
             contextdev::set_contextdev_api_key,
             imports::get_filter_options,

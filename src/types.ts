@@ -190,7 +190,7 @@ export type LeadFilterOptions = {
 export type SearchRunView = {
   id: string;
   label: string;
-  kind: "web" | "source" | "directory" | "crawl";
+  kind: "web" | "source" | "directory" | "crawl" | "discovery";
   status: "running" | "completed" | "cancelled" | "failed";
   lead_count: number;
   page_count: number;
@@ -204,6 +204,16 @@ export type SeedListView = {
   crawled: number;
   failed: number;
   without_site: number;
+  /** Not confidently classified or not confirmed: stored, never read. */
+  to_verify: number;
+};
+export type DiscoveryReport = {
+  found: number;
+  known: number;
+  rejected: number;
+  accepted: number;
+  to_verify: number;
+  credits: number;
 };
 export type CrawlProgress = {
   run_id: string;

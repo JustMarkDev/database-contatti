@@ -1013,7 +1013,7 @@ async fn read_role_pdfs(settings: &CrawlSettings<'_>, state: &mut HostState) {
 }
 
 /// Social networks and portals: a site that redirects there is not the organization's own.
-fn is_portal(host: &str) -> bool {
+pub(crate) fn is_portal(host: &str) -> bool {
     OUTBOUND_NOISE.iter().any(|noise| host.contains(noise))
         || crate::contextdev::EXCLUDED_DOMAINS
             .iter()
