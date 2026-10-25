@@ -58,10 +58,11 @@ import type {
  */
 
 const PAGE_SIZE = 100;
-const MAX_PAGES_PER_DOMAIN = 20;
-const MAX_PDFS = 5;
+/** Pages read per site, the home included: each one is a context.dev credit. */
+const PAGES_PER_SITE = 3;
+/** PDFs per school site (role circolari); 0 keeps every run at ≤4 credits a site. */
+const MAX_PDFS = 0;
 const SITES_PER_RUN = 50;
-const PAGES_PER_SITE = 10;
 /** Every crawl reads pages with the IA: it is what finds roles, offices and places. */
 const USE_AI = true;
 
@@ -114,13 +115,14 @@ const emptyOptions = (): LeadFilterOptions => ({
   stato: [],
 });
 
-/** `open_data`, `sito`, `tinyfish`, `archivio` (+`ia`) in words. */
+/** `open_data`, `contextdev` (older runs: `sito`, `tinyfish`, `archivio`) (+`ia`) in words. */
 export function formatMethod(method: string | null | undefined): string {
   if (!method) return "—";
   const [base, ...extra] = method.split("+");
   const label =
     {
       open_data: "Dati aperti",
+      contextdev: "Sito web (context.dev)",
       sito: "Sito web",
       tinyfish: "Sito (TinyFish)",
       archivio: "Archivio web",
@@ -446,7 +448,7 @@ export function SearchPage({
           return startSearchRun({
             query: trimmed,
             seedUrls: urls,
-            maxPagesPerDomain: MAX_PAGES_PER_DOMAIN,
+            maxPagesPerDomain: PAGES_PER_SITE,
             maxPdfs: MAX_PDFS,
             useAi: USE_AI,
           });

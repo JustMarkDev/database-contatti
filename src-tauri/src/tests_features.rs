@@ -3790,13 +3790,19 @@ fn search_discovery_validate_seeds_rejects_empty_invalid_and_oversized() {
         let error = validate_seeds(&[seed.to_owned()]).unwrap_err();
         assert!(error.contains("URL non valido"), "{seed}: {error}");
     }
+
+    // Internal addresses never reach context.dev.
+    for seed in ["http://localhost:8080/contatti", "https://192.168.1.10/"] {
+        let error = validate_seeds(&[seed.to_owned()]).unwrap_err();
+        assert!(error.contains("non pubblico"), "{seed}: {error}");
+    }
 }
 
 #[test]
 fn search_discovery_validate_seeds_accepts_and_trims_http_seeds() {
     let seeds = validate_seeds(&[
         " https://prima.example.test/ ".to_owned(),
-        "http://localhost:8080/contatti".to_owned(),
+        "http://terza.example.test:8080/contatti".to_owned(),
         "https://seconda.example.test".to_owned(),
     ])
     .unwrap();
@@ -3804,7 +3810,7 @@ fn search_discovery_validate_seeds_accepts_and_trims_http_seeds() {
         seeds,
         vec![
             "https://prima.example.test/".to_owned(),
-            "http://localhost:8080/contatti".to_owned(),
+            "http://terza.example.test:8080/contatti".to_owned(),
             "https://seconda.example.test".to_owned(),
         ]
     );
@@ -3817,7 +3823,7 @@ fn search_discovery_run_limits_clamp_to_documented_bounds() {
         (DEFAULT_MAX_PAGES_PER_DOMAIN, DEFAULT_MAX_PDFS)
     );
     assert_eq!(clamp_run_limits(Some(0), Some(-1)), (1, 0));
-    assert_eq!(clamp_run_limits(Some(5), Some(3)), (5, 3));
+    assert_eq!(clamp_run_limits(Some(4), Some(1)), (4, 1));
     assert_eq!(
         clamp_run_limits(Some(1_000), Some(1_000)),
         (MAX_PAGES_PER_DOMAIN, MAX_PDF_LINKS)

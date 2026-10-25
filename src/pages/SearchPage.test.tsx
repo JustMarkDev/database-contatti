@@ -316,7 +316,7 @@ describe("SearchPage", () => {
       request: { sourceId: "dir-cai", useAi: true },
     });
     expect(invoke).toHaveBeenCalledWith("import_lead_source", { sourceId: "wikidata-religiosi" });
-    const base = { limit: 50, maxPages: 10, maxPdfs: 5, useAi: true };
+    const base = { limit: 50, maxPages: 3, maxPdfs: 0, useAi: true };
     expect(exploreCalls()).toEqual([
       { request: { ...base, listName: "Fonte: Wikidata diocesi" } },
       { request: { ...base, listName: "Elenco: CAI sezioni" } },
@@ -397,8 +397,8 @@ describe("SearchPage", () => {
       expect(invoke).toHaveBeenCalledWith("start_search_run", {
         query: "tutte le pro loco della Lombardia",
         seedUrls: ["https://www.scuola.example.test/", "https://ic.example.test/bullismo"],
-        maxPagesPerDomain: 20,
-        maxPdfs: 5,
+        maxPagesPerDomain: 3,
+        maxPdfs: 0,
         useAi: true,
       }),
     );
@@ -416,8 +416,8 @@ describe("SearchPage", () => {
         subcategory: "Pro Loco",
         regione: "Lombardia",
         limit: 50,
-        maxPages: 10,
-        maxPdfs: 5,
+        maxPages: 3,
+        maxPdfs: 0,
         useAi: true,
       },
     });
@@ -556,6 +556,7 @@ describe("SearchPage", () => {
 
   it("formats extraction methods in words", () => {
     expect(formatMethod("open_data")).toBe("Dati aperti");
+    expect(formatMethod("contextdev+ia")).toBe("Sito web (context.dev) + IA");
     expect(formatMethod("tinyfish+ia")).toBe("Sito (TinyFish) + IA");
     expect(formatMethod(null)).toBe("—");
   });

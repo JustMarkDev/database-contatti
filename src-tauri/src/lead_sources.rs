@@ -1267,7 +1267,7 @@ pub(crate) fn parse_open_table(
 async fn download_bytes(client: &reqwest::Client, url: &str) -> Result<Vec<u8>, String> {
     let response = get_ok(client, url)
         .await
-        .map_err(|error| format!("{url}: {}", error.message))?;
+        .map_err(|error| format!("{url}: {error}"))?;
     read_limited(response, MAX_SOURCE_BYTES)
         .await
         .map_err(|error| format!("{url}: {error}"))

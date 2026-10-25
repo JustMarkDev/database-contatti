@@ -4,9 +4,12 @@
 //! database. Every call shares one semaphore because the plan's concurrency
 //! limit counts requests in flight and answers an immediate 429 above it.
 //! Credits consumed are summed from `key_metadata`, failed calls included.
+//! The client stops itself (every later call fails without being sent) on a
+//! 402, a rejected key, three 400s in a row or when the run's credit cap is hit.
 
 use crate::ai_typesafe::TypeSafeKeyView;
 use serde::Deserialize;
+use std::sync::Mutex;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
@@ -34,10 +37,12 @@ pub(crate) const EXCLUDED_DOMAINS: [&str; 10] = [
     "paginebianche.it",
 ];
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub(crate) enum ContextError {
     /// 402: credits exhausted. Not retried; pending seeds stay pending.
     UsageExceeded,
+    /// The run's own credit cap: the call was not sent.
+    BudgetReached,
     /// 429: too many requests in flight. Never the site's fault.
     RateLimited(Duration),
     /// 408, 5xx, `INTERNAL_ERROR` or a network failure towards context.dev.
@@ -65,6 +70,7 @@ impl std::fmt::Display for ContextError {
                 f,
                 "crediti context.dev esauriti: ricarica o attendi il rinnovo, poi rilancia la ricerca"
             ),
+            Self::BudgetReached => write!(f, "tetto di crediti della ricerca raggiunto"),
             Self::RateLimited(_) => write!(f, "troppe richieste context.dev in parallelo"),
             Self::Transient(message) => write!(f, "context.dev non disponibile: {message}"),
             Self::Blocked => write!(f, "pagina bloccata dal sito"),
@@ -127,7 +133,7 @@ fn credits_consumed(body: &str) -> u64 {
 /// only public http(s) addresses are sent.
 fn check_public_host(host: &str) -> Result<(), ContextError> {
     if host.is_empty() || crate::discovery::is_internal_host(host) {
-        return Err(ContextError::BadRequest(format!(
+        return Err(ContextError::Failed(format!(
             "indirizzo non pubblico: {host}"
         )));
     }
@@ -137,7 +143,7 @@ fn check_public_host(host: &str) -> Result<(), ContextError> {
 fn check_public_url(url: &str) -> Result<(), ContextError> {
     let lower = url.to_ascii_lowercase();
     if !(lower.starts_with("https://") || lower.starts_with("http://")) {
-        return Err(ContextError::BadRequest(format!("URL non http: {url}")));
+        return Err(ContextError::Failed(format!("URL non http: {url}")));
     }
     check_public_host(&crate::discovery::url_host(url).unwrap_or_default())
 }
@@ -270,10 +276,21 @@ pub(crate) struct ContextDev {
     key: String,
     slots: tokio::sync::Semaphore,
     credits_used: AtomicU64,
+    /// Credits this client may spend; `None` for no cap.
+    budget: Option<u64>,
+    halted: Mutex<Option<ContextError>>,
+    bad_requests_in_a_row: AtomicU64,
 }
 
+/// A Free-plan key can be disabled by request errors: stop well before.
+const MAX_BAD_REQUESTS_IN_A_ROW: u64 = 3;
+
 impl ContextDev {
-    pub(crate) fn new(key: String, concurrency: usize) -> Result<Self, String> {
+    pub(crate) fn new(
+        key: String,
+        concurrency: usize,
+        budget: Option<u64>,
+    ) -> Result<Self, String> {
         Ok(Self {
             http: reqwest::Client::builder()
                 .timeout(HTTP_TIMEOUT)
@@ -282,12 +299,53 @@ impl ContextDev {
             key,
             slots: tokio::sync::Semaphore::new(concurrency.max(1)),
             credits_used: AtomicU64::new(0),
+            budget,
+            halted: Mutex::new(None),
+            bad_requests_in_a_row: AtomicU64::new(0),
         })
     }
 
     /// Credits consumed by this client so far, failed calls included.
     pub(crate) fn credits_used(&self) -> u64 {
         self.credits_used.load(Ordering::Relaxed)
+    }
+
+    /// Why a call costing `cost` credits would not be sent.
+    fn refusal(&self, cost: u64) -> Option<ContextError> {
+        if let Some(error) = self.halted.lock().ok()?.clone() {
+            return Some(error);
+        }
+        self.budget
+            .is_some_and(|budget| self.credits_used() + cost > budget)
+            .then_some(ContextError::BudgetReached)
+    }
+
+    /// Set once the client refuses every call: the run should stop.
+    pub(crate) fn stop_reason(&self) -> Option<ContextError> {
+        self.refusal(1)
+    }
+
+    fn note_status(&self, status: u16, error: Option<&ContextError>) {
+        let halt = match (status, error) {
+            (400, _) => {
+                let streak = self.bad_requests_in_a_row.fetch_add(1, Ordering::Relaxed) + 1;
+                (streak >= MAX_BAD_REQUESTS_IN_A_ROW).then(|| {
+                    ContextError::BadRequest(format!(
+                        "{streak} richieste rifiutate di fila, ricerca fermata"
+                    ))
+                })
+            }
+            (_, Some(error @ (ContextError::UsageExceeded | ContextError::Unauthorized(_)))) => {
+                Some(error.clone())
+            }
+            _ => {
+                self.bad_requests_in_a_row.store(0, Ordering::Relaxed);
+                None
+            }
+        };
+        if let (Some(halt), Ok(mut halted)) = (halt, self.halted.lock()) {
+            halted.get_or_insert(halt);
+        }
     }
 
     async fn send_once(&self, request: reqwest::RequestBuilder) -> Result<String, ContextError> {
@@ -312,20 +370,27 @@ impl ContextDev {
             .map_err(|error| ContextError::Transient(error.to_string()))?;
         self.credits_used
             .fetch_add(credits_consumed(&body), Ordering::Relaxed);
-        if (200..300).contains(&status) {
+        let result = if (200..300).contains(&status) {
             Ok(body)
         } else {
             Err(api_error(status, &body, retry_after))
-        }
+        };
+        self.note_status(status, result.as_ref().err());
+        result
     }
 
+    /// `cost` is the expected price, checked against the cap before sending.
     async fn call<T>(
         &self,
+        cost: u64,
         request: impl Fn(&reqwest::Client) -> reqwest::RequestBuilder,
         parse: impl Fn(&str) -> Result<T, ContextError>,
     ) -> Result<T, ContextError> {
         let mut attempt = 0;
         loop {
+            if let Some(error) = self.refusal(cost) {
+                return Err(error);
+            }
             let error = match self.send_once(request(&self.http)).await {
                 Ok(body) => match parse(&body) {
                     Ok(value) => return Ok(value),
@@ -353,6 +418,7 @@ impl ContextDev {
             "timeoutOpts": { "milliseconds": SCRAPE_TIMEOUT_MS, "behavior": "fail" },
         });
         self.call(
+            1,
             |http| http.post(format!("{BASE_URL}/web/scrape")).json(&body),
             |response| scraped(response, markdown),
         )
@@ -388,6 +454,7 @@ impl ContextDev {
         query.extend(url_regex.map(|regex| ("urlRegex", regex)));
         query.extend(search.map(|text| ("search", text)));
         self.call(
+            if search.is_some() { 2 } else { 1 },
             |http| http.get(format!("{BASE_URL}/web/urls")).query(&query),
             mapped,
         )
@@ -405,6 +472,7 @@ impl ContextDev {
             "timeoutOpts": { "milliseconds": SEARCH_TIMEOUT_MS, "behavior": "fail" },
         });
         self.call(
+            1,
             |http| http.post(format!("{BASE_URL}/web/search")).json(&body),
             searched,
         )
@@ -413,6 +481,7 @@ impl ContextDev {
 
     pub(crate) async fn usage(&self) -> Result<Usage, ContextError> {
         self.call(
+            0,
             |http| http.get(format!("{BASE_URL}/org/usage")),
             |body| {
                 serde_json::from_str(body).map_err(|error| {
@@ -429,6 +498,18 @@ fn env_key() -> Option<String> {
         .ok()
         .map(|value| value.trim().to_owned())
         .filter(|value| !value.is_empty())
+}
+
+const CONCURRENCY_KEY: &str = "contextdev_concurrency";
+/// The Free plan's limit; Developer allows 10, Pro 100.
+const DEFAULT_CONCURRENCY: usize = 2;
+const MAX_CONCURRENCY: usize = 100;
+
+/// Requests in flight the plan allows, from the settings (default: Free plan).
+pub(crate) fn concurrency(db: &rusqlite::Connection) -> Result<usize, String> {
+    Ok(crate::ai_registry::load_setting(db, CONCURRENCY_KEY)?
+        .and_then(|value| value.trim().parse::<usize>().ok())
+        .map_or(DEFAULT_CONCURRENCY, |value| value.clamp(1, MAX_CONCURRENCY)))
 }
 
 pub(crate) fn resolve_key(db: &rusqlite::Connection) -> Result<Option<String>, String> {
@@ -623,6 +704,36 @@ mod tests {
     }
 
     #[test]
+    fn contextdev_client_stops_on_credits_key_bad_requests_and_its_cap() {
+        let client = ContextDev::new("k".to_owned(), 2, Some(10)).unwrap();
+        assert_eq!(client.stop_reason(), None);
+        client.credits_used.store(9, Ordering::Relaxed);
+        assert_eq!(client.refusal(1), None);
+        assert_eq!(client.refusal(2), Some(ContextError::BudgetReached));
+        client.credits_used.store(10, Ordering::Relaxed);
+        assert_eq!(client.stop_reason(), Some(ContextError::BudgetReached));
+
+        let client = ContextDev::new("k".to_owned(), 2, None).unwrap();
+        client.note_status(400, None);
+        client.note_status(400, None);
+        client.note_status(200, None);
+        client.note_status(400, None);
+        client.note_status(400, None);
+        assert_eq!(client.stop_reason(), None, "a success resets the streak");
+        client.note_status(400, None);
+        assert!(matches!(
+            client.stop_reason(),
+            Some(ContextError::BadRequest(_))
+        ));
+
+        let client = ContextDev::new("k".to_owned(), 2, None).unwrap();
+        client.note_status(402, Some(&ContextError::UsageExceeded));
+        client.note_status(401, Some(&ContextError::Unauthorized(String::new())));
+        assert_eq!(client.stop_reason(), Some(ContextError::UsageExceeded));
+        assert_eq!(client.refusal(0), Some(ContextError::UsageExceeded));
+    }
+
+    #[test]
     fn contextdev_never_sends_internal_or_non_http_addresses() {
         for url in [
             "http://localhost:8080/contatti",
@@ -632,7 +743,7 @@ mod tests {
             "https:///percorso",
         ] {
             assert!(
-                matches!(check_public_url(url), Err(ContextError::BadRequest(_))),
+                matches!(check_public_url(url), Err(ContextError::Failed(_))),
                 "{url}"
             );
         }

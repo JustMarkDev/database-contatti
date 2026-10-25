@@ -1,17 +1,20 @@
 //! Sites to explore and the parallel crawl behind **Cerca lead**.
 //!
-//! Seeds (`search_seeds`) come from open-data lists, directories, existing
-//! contacts' domains, pasted URLs and web search. Exploring picks pending
-//! seeds one per host, crawls hosts in parallel (each host sequential and
-//! polite, see `discovery::crawl_host`) and appends each host's leads to a
-//! `running` run as soon as the host finishes, so a stopped crawl keeps what
-//! it found. A seed's organization, taxonomy and geography pass to the
-//! addresses of its own site. Nothing here writes `contacts`.
+//! Seeds (`search_seeds`) come from directories, existing contacts' domains,
+//! pasted URLs and web search. Exploring picks pending seeds one per host,
+//! reads hosts in parallel through context.dev (each host sequential, see
+//! `discovery::crawl_host`; the plan's concurrency limit caps the hosts in
+//! flight) and appends each host's leads to a `running` run as soon as the
+//! host finishes, so a stopped crawl keeps what it found. A seed's
+//! organization, taxonomy and geography pass to the addresses of its own site.
+//! A host that could not be read because of credits or capacity stays
+//! `pending`. Nothing here writes `contacts`.
 
+use crate::contextdev::{ContextDev, ContextError};
 use crate::discovery::{
-    CrawlSettings, HOST_CONCURRENCY, HostCrawl, LeadAccumulator, LeadContext, RunRecord,
-    append_leads, collect_leads, crawl_client, crawl_host, create_run, finish_run, html_to_text,
-    page_anchors, parse_page, polite_client, url_host,
+    CrawlSettings, HostCrawl, LeadAccumulator, LeadContext, RunRecord, append_leads, collect_leads,
+    crawl_host, create_run, finish_run, html_to_text, page_anchors, parse_page, polite_client,
+    url_host,
 };
 use crate::lead_ai::LeadAi;
 use crate::lead_sources::Geography;
@@ -24,7 +27,6 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 use tauri::Emitter;
 
-const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_EXPLORE_SITES: usize = 500;
 const MAX_DIRECTORY_PAGES: usize = 200;
 /// A host crawled this recently is not crawled again from another list.
@@ -588,7 +590,28 @@ pub(crate) async fn crawl_urls(
     let label = job.label.clone();
     let (kind, source_id) = (job.kind, job.source_id.clone());
     let use_ai = job.use_ai;
-    let (run_id, tinyfish_key, geography, taxonomy) = crate::database::blocking(move || {
+    let (key, concurrency) = crate::database::blocking({
+        let app = app.clone();
+        move || {
+            let db = open_db(&app)?;
+            Ok((
+                crate::contextdev::resolve_key(&db)?,
+                crate::contextdev::concurrency(&db)?,
+            ))
+        }
+    })
+    .await?;
+    let key = key.ok_or_else(|| {
+        "Imposta la chiave context.dev nelle Impostazioni per leggere i siti.".to_owned()
+    })?;
+    let context = ContextDev::new(key, concurrency, None)?;
+    context
+        .usage()
+        .await
+        .map_err(|error| error.to_string())?
+        .spend_guard()?;
+
+    let (run_id, geography, taxonomy) = crate::database::blocking(move || {
         let db = open_db(&setup_app)?;
         let run_id = create_run(
             &db,
@@ -609,12 +632,7 @@ pub(crate) async fn crawl_urls(
         } else {
             Vec::new()
         };
-        Ok((
-            run_id,
-            crate::tinyfish::resolve_key(&db)?,
-            Geography::load(&db)?,
-            taxonomy,
-        ))
+        Ok((run_id, Geography::load(&db)?, taxonomy))
     })
     .await?;
 
@@ -643,11 +661,8 @@ pub(crate) async fn crawl_urls(
     } else {
         None
     };
-    let client = crawl_client(FETCH_TIMEOUT).map_err(|error| error.to_string())?;
-    let fallback = crawl_client(crate::tinyfish::FETCH_TIMEOUT).ok();
     let settings = CrawlSettings {
-        client: &client,
-        tinyfish: tinyfish_key.as_deref().zip(fallback.as_ref()),
+        context: &context,
         max_pages: job.max_pages.max(1) as usize,
         max_pdfs: job.max_pdfs.max(0) as usize,
         directory: job.directory.is_some(),
@@ -660,7 +675,7 @@ pub(crate) async fn crawl_urls(
             let (settings, job, ai, geography, now) =
                 (&settings, &job, ai.as_ref(), &geography, &now);
             async move {
-                if CANCEL.load(Ordering::Relaxed) {
+                if CANCEL.load(Ordering::Relaxed) || settings.context.stop_reason().is_some() {
                     return (
                         host,
                         HostCrawl::default(),
@@ -670,13 +685,14 @@ pub(crate) async fn crawl_urls(
                         true,
                     );
                 }
-                let crawl = crawl_host(settings, &urls).await;
+                let crawl = crawl_host(settings, &urls, seed.context.category.as_deref()).await;
+                let site = crawl.site_host.clone().unwrap_or_else(|| host.clone());
                 let (leads, outbound, errors) =
-                    host_leads(&crawl, &host, &seed, job, ai, geography, now).await;
+                    host_leads(&crawl, &site, &seed, job, ai, geography, now).await;
                 (host, crawl, leads, outbound, errors, false)
             }
         })
-        .buffer_unordered(HOST_CONCURRENCY);
+        .buffer_unordered(concurrency);
 
     let mut done = 0usize;
     let mut page_count = 0i64;
@@ -690,10 +706,11 @@ pub(crate) async fn crawl_urls(
         }
         page_count += crawl.pages.len() as i64;
         pdf_found += crawl.pdf_found as i64;
-        let status = if crawl.pages.is_empty() {
-            "failed"
-        } else {
-            "crawled"
+        // Credits, capacity or the key, not the site: read it again next run.
+        let status = match (crawl.pages.is_empty(), crawl.retry_later) {
+            (false, _) => Some("crawled"),
+            (true, false) => Some("failed"),
+            (true, true) => None,
         };
         let first_error = crawl.errors.first().cloned();
         errors.extend(crawl.errors.into_iter().chain(host_errors));
@@ -704,14 +721,16 @@ pub(crate) async fn crawl_urls(
             let db = open_db(&persist_app)?;
             let count = leads.len();
             let inserted = append_leads(&db, &persist_run, leads)?;
-            mark_host(
-                &db,
-                &persist_host,
-                status,
-                count,
-                first_error.as_deref(),
-                &persist_now,
-            )?;
+            if let Some(status) = status {
+                mark_host(
+                    &db,
+                    &persist_host,
+                    status,
+                    count,
+                    first_error.as_deref(),
+                    &persist_now,
+                )?;
+            }
             if let Some(directory) = directory {
                 insert_seeds(&db, &directory.list_name, &outbound, &persist_now)?;
             }
@@ -735,9 +754,17 @@ pub(crate) async fn crawl_urls(
     drop(stream);
 
     let cancelled = CANCEL.load(Ordering::SeqCst);
+    let halted = context.stop_reason();
     errors.truncate(MAX_RUN_ERRORS);
+    if let Some(reason) = &halted {
+        errors.insert(0, format!("Ricerca fermata: {reason}"));
+    }
     let (finish_app, finish_run_id) = (app.clone(), run_id.clone());
-    let status = if cancelled { "cancelled" } else { "completed" };
+    let status = match (&halted, cancelled) {
+        (Some(ContextError::BudgetReached), _) | (None, false) => "completed",
+        (Some(_), _) => "failed",
+        (None, true) => "cancelled",
+    };
     crate::database::blocking(move || {
         finish_run(
             &*open_db(&finish_app)?,
@@ -761,6 +788,11 @@ pub(crate) async fn crawl_urls(
             finished: true,
         },
     );
+    if let Some(reason) = halted.filter(|reason| *reason != ContextError::BudgetReached) {
+        return Err(format!(
+            "Ricerca fermata: {reason}. I lead trovati finora sono salvati; i siti non letti restano da leggere."
+        ));
+    }
     Ok(SearchRunSummary {
         run_id,
         lead_count: lead_total,
@@ -931,7 +963,7 @@ impl Default for ExploreRequest {
             regione: None,
             limit: 50,
             max_pages: crate::discovery::DEFAULT_MAX_PAGES_PER_DOMAIN,
-            max_pdfs: 5,
+            max_pdfs: crate::discovery::DEFAULT_MAX_PDFS,
             use_ai: false,
         }
     }
