@@ -1,44 +1,86 @@
 //! Sites to explore and the parallel crawl behind **Cerca lead**.
 //!
-//! Seeds (`search_seeds`) come from open-data lists, directories, existing
-//! contacts' domains, pasted URLs and web search. Exploring picks pending
-//! seeds one per host, crawls hosts in parallel (each host sequential and
-//! polite, see `discovery::crawl_host`) and appends each host's leads to a
-//! `running` run as soon as the host finishes, so a stopped crawl keeps what
-//! it found. A seed's organization, taxonomy and geography pass to the
-//! addresses of its own site. Nothing here writes `contacts`.
+//! Seeds (`search_seeds`) come from directories, existing contacts' domains,
+//! pasted URLs and web search. Exploring picks pending seeds one per host,
+//! reads hosts in parallel through context.dev (each host sequential, see
+//! `discovery::crawl_host`; the plan's concurrency limit caps the hosts in
+//! flight) and appends each host's leads to a `running` run as soon as the
+//! host finishes, so a stopped crawl keeps what it found. A seed's
+//! organization, taxonomy and geography pass to the addresses of its own site.
+//! A host that could not be read because of credits or capacity stays
+//! `pending`. Nothing here writes `contacts`.
 
+use crate::contextdev::{ContextDev, ContextError};
 use crate::discovery::{
-    CrawlSettings, HOST_CONCURRENCY, HostCrawl, LeadAccumulator, LeadContext, RunRecord,
-    append_leads, collect_leads, crawl_client, crawl_host, create_run, finish_run, html_to_text,
-    page_anchors, parse_page, polite_client, url_host,
+    CrawlSettings, HostCrawl, LeadAccumulator, LeadContext, RunRecord, append_leads, collect_leads,
+    crawl_host, create_run, finish_run, html_to_text, page_anchors, parse_page, url_host,
 };
 use crate::lead_ai::LeadAi;
-use crate::lead_sources::Geography;
+use crate::lead_directories::{DIRECTORIES, Geography};
 use crate::{SearchRunSummary, open_db};
 use futures::StreamExt;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
 use tauri::Emitter;
 
-const FETCH_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_EXPLORE_SITES: usize = 500;
 const MAX_DIRECTORY_PAGES: usize = 200;
 /// A host crawled this recently is not crawled again from another list.
 const RECRAWL_AFTER_DAYS: i64 = 30;
 const MAX_RUN_ERRORS: usize = 300;
 const MAX_AI_DIRECTORY_PAGES: usize = 15;
-/// TinyFish Search allows 30 requests a minute.
-const SEARCH_INTERVAL: Duration = Duration::from_millis(2100);
 
 static RUNNING: AtomicBool = AtomicBool::new(false);
 static CANCEL: AtomicBool = AtomicBool::new(false);
 
 pub(crate) fn crawl_running() -> bool {
     RUNNING.load(Ordering::SeqCst)
+}
+
+pub(crate) fn cancelled() -> bool {
+    CANCEL.load(Ordering::Relaxed)
+}
+
+/// One context.dev job at a time (crawl or discovery): they share the plan's
+/// concurrency limit and the credits.
+pub(crate) fn start_job() -> Result<RunningGuard, String> {
+    if RUNNING.swap(true, Ordering::SeqCst) {
+        return Err("Un'esplorazione è già in corso: fermala o attendi la fine.".to_owned());
+    }
+    CANCEL.store(false, Ordering::SeqCst);
+    Ok(RunningGuard)
+}
+
+/// A context.dev client for one job, capped at what the balance allows above
+/// the reserve, the per-run cap of the settings and `request_cap` (0: none).
+/// Refuses to start when the key is missing, the balance is at the reserve or
+/// Auto-Topup is on without a monthly budget (`GET /org/usage`, free).
+pub(crate) async fn open_context(
+    app: &tauri::AppHandle,
+    request_cap: u64,
+) -> Result<ContextDev, String> {
+    let (key, settings) = crate::database::blocking({
+        let app = app.clone();
+        move || {
+            let db = open_db(&app)?;
+            Ok((
+                crate::contextdev::resolve_key(&db)?,
+                crate::contextdev::load_settings(&db)?,
+            ))
+        }
+    })
+    .await?;
+    let key = key.ok_or_else(|| {
+        "Imposta la chiave context.dev nelle Impostazioni per leggere i siti.".to_owned()
+    })?;
+    let usage = ContextDev::new(key.clone(), 1, None)?
+        .usage()
+        .await
+        .map_err(|error| error.to_string())?;
+    let budget = usage.budget(&settings, request_cap)?;
+    ContextDev::new(key, settings.concurrency, Some(budget))
 }
 
 /// One site to explore (or, without `url`, an organization still to be found).
@@ -75,12 +117,23 @@ pub(crate) fn insert_seeds(
     seeds: &[SeedRow],
     now: &str,
 ) -> Result<usize, String> {
+    insert_seeds_with_status(db, list_name, seeds, "pending", now)
+}
+
+/// `pending` seeds are read; `verifica` ones wait for a person and never are.
+pub(crate) fn insert_seeds_with_status(
+    db: &Connection,
+    list_name: &str,
+    seeds: &[SeedRow],
+    status: &str,
+    now: &str,
+) -> Result<usize, String> {
     let mut statement = db
         .prepare(
             "INSERT OR IGNORE INTO search_seeds(
                 id,list_name,url,host,name,category,subcategory,comune,provincia,regione,
                 address,postal_code,official_code,status,created_at
-             ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,'pending',?14)",
+             ) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?15,?14)",
         )
         .map_err(|error| error.to_string())?;
     let mut inserted = 0;
@@ -111,6 +164,7 @@ pub(crate) fn insert_seeds(
                 context.postal_code,
                 context.official_code,
                 now,
+                status,
             ])
             .map_err(|error| error.to_string())?;
     }
@@ -126,6 +180,9 @@ pub(crate) struct SeedListView {
     pub(crate) failed: i64,
     /// Organizations known only by name: "Trova siti" searches them.
     pub(crate) without_site: i64,
+    /// Classified below the confidence threshold or not confirmed by the
+    /// search: never read until a person checks them.
+    pub(crate) to_verify: i64,
 }
 
 pub(crate) fn seed_lists(db: &Connection) -> Result<Vec<SeedListView>, String> {
@@ -133,7 +190,8 @@ pub(crate) fn seed_lists(db: &Connection) -> Result<Vec<SeedListView>, String> {
         .prepare(
             "SELECT list_name, COUNT(*),
                     SUM(status='pending' AND url IS NOT NULL), SUM(status='crawled'),
-                    SUM(status='failed'), SUM(url IS NULL AND status='pending')
+                    SUM(status='failed'), SUM(url IS NULL AND status='pending'),
+                    SUM(status='verifica')
              FROM search_seeds GROUP BY list_name ORDER BY max(created_at) DESC",
         )
         .map_err(|error| error.to_string())?;
@@ -147,6 +205,7 @@ pub(crate) fn seed_lists(db: &Connection) -> Result<Vec<SeedListView>, String> {
                 crawled: row.get(3)?,
                 failed: row.get(4)?,
                 without_site: row.get(5)?,
+                to_verify: row.get(6)?,
             })
         })
         .map_err(|error| error.to_string())?
@@ -176,7 +235,7 @@ const PROVIDER_LABELS: [&str; 18] = [
     "mailbox",
 ];
 
-fn is_provider_domain(domain: &str) -> bool {
+pub(crate) fn is_provider_domain(domain: &str) -> bool {
     crate::ai_typesafe::is_consumer_mail_domain(domain)
         || domain
             .split('.')
@@ -356,6 +415,17 @@ fn mark_host(
     .map_err(|error| error.to_string())
 }
 
+/// Credits a host's reading cost, on the seeds of that host (any status).
+fn add_host_credits(db: &Connection, host: &str, credits: u64) -> Result<(), String> {
+    db.execute(
+        "UPDATE search_seeds SET credits_used=credits_used+?2
+         WHERE id=(SELECT id FROM search_seeds WHERE host=?1 ORDER BY created_at, rowid LIMIT 1)",
+        params![host, credits as i64],
+    )
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
 /// Directory crawl: where its outbound sites go and what they inherit.
 #[derive(Debug, Clone)]
 pub(crate) struct DirectoryInfo {
@@ -372,6 +442,8 @@ pub(crate) struct CrawlJob {
     pub(crate) max_pdfs: i64,
     pub(crate) use_ai: bool,
     pub(crate) directory: Option<DirectoryInfo>,
+    /// Credits this run may spend at most (0: the settings' per-run cap).
+    pub(crate) max_credits: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -383,9 +455,13 @@ struct CrawlProgress {
     leads: i64,
     host: String,
     finished: bool,
+    /// Credits this run has spent so far.
+    credits_used: u64,
+    /// Balance after the last call, when context.dev reported it.
+    credits_remaining: Option<i64>,
 }
 
-struct RunningGuard;
+pub(crate) struct RunningGuard;
 
 impl Drop for RunningGuard {
     fn drop(&mut self) {
@@ -558,11 +634,7 @@ pub(crate) async fn crawl_urls(
     job: CrawlJob,
     seeds: Vec<SeedRow>,
 ) -> Result<SearchRunSummary, String> {
-    if RUNNING.swap(true, Ordering::SeqCst) {
-        return Err("Un'esplorazione è già in corso: fermala o attendi la fine.".to_owned());
-    }
-    let _guard = RunningGuard;
-    CANCEL.store(false, Ordering::SeqCst);
+    let _guard = start_job()?;
 
     let mut hosts: BTreeMap<String, (Vec<String>, SeedRow)> = BTreeMap::new();
     for seed in seeds {
@@ -588,7 +660,10 @@ pub(crate) async fn crawl_urls(
     let label = job.label.clone();
     let (kind, source_id) = (job.kind, job.source_id.clone());
     let use_ai = job.use_ai;
-    let (run_id, tinyfish_key, geography, taxonomy) = crate::database::blocking(move || {
+    let context = open_context(&app, job.max_credits).await?;
+    let concurrency = context.concurrency();
+
+    let (run_id, geography, taxonomy) = crate::database::blocking(move || {
         let db = open_db(&setup_app)?;
         let run_id = create_run(
             &db,
@@ -597,9 +672,6 @@ pub(crate) async fn crawl_urls(
                 query_text: &label,
                 source_id: source_id.as_deref(),
                 seed_count: total as i64,
-                page_count: 0,
-                pdf_found: 0,
-                errors: &[],
                 now: &setup_now,
             },
             "running",
@@ -609,12 +681,7 @@ pub(crate) async fn crawl_urls(
         } else {
             Vec::new()
         };
-        Ok((
-            run_id,
-            crate::tinyfish::resolve_key(&db)?,
-            Geography::load(&db)?,
-            taxonomy,
-        ))
+        Ok((run_id, Geography::load(&db)?, taxonomy))
     })
     .await?;
 
@@ -643,11 +710,8 @@ pub(crate) async fn crawl_urls(
     } else {
         None
     };
-    let client = crawl_client(FETCH_TIMEOUT).map_err(|error| error.to_string())?;
-    let fallback = crawl_client(crate::tinyfish::FETCH_TIMEOUT).ok();
     let settings = CrawlSettings {
-        client: &client,
-        tinyfish: tinyfish_key.as_deref().zip(fallback.as_ref()),
+        context: &context,
         max_pages: job.max_pages.max(1) as usize,
         max_pdfs: job.max_pdfs.max(0) as usize,
         directory: job.directory.is_some(),
@@ -660,7 +724,7 @@ pub(crate) async fn crawl_urls(
             let (settings, job, ai, geography, now) =
                 (&settings, &job, ai.as_ref(), &geography, &now);
             async move {
-                if CANCEL.load(Ordering::Relaxed) {
+                if CANCEL.load(Ordering::Relaxed) || settings.context.stop_reason().is_some() {
                     return (
                         host,
                         HostCrawl::default(),
@@ -670,19 +734,21 @@ pub(crate) async fn crawl_urls(
                         true,
                     );
                 }
-                let crawl = crawl_host(settings, &urls).await;
+                let crawl = crawl_host(settings, &urls, seed.context.category.as_deref()).await;
+                let site = crawl.site_host.clone().unwrap_or_else(|| host.clone());
                 let (leads, outbound, errors) =
-                    host_leads(&crawl, &host, &seed, job, ai, geography, now).await;
+                    host_leads(&crawl, &site, &seed, job, ai, geography, now).await;
                 (host, crawl, leads, outbound, errors, false)
             }
         })
-        .buffer_unordered(HOST_CONCURRENCY);
+        .buffer_unordered(concurrency);
 
     let mut done = 0usize;
     let mut page_count = 0i64;
     let mut pdf_found = 0i64;
     let mut lead_total = 0i64;
     let mut errors: Vec<String> = Vec::new();
+    let mut linked_sites: Vec<SeedRow> = Vec::new();
     while let Some((host, crawl, leads, outbound, host_errors, skipped)) = stream.next().await {
         done += 1;
         if skipped {
@@ -690,31 +756,33 @@ pub(crate) async fn crawl_urls(
         }
         page_count += crawl.pages.len() as i64;
         pdf_found += crawl.pdf_found as i64;
-        let status = if crawl.pages.is_empty() {
-            "failed"
-        } else {
-            "crawled"
+        // Credits, capacity or the key, not the site: read it again next run.
+        let status = match (crawl.pages.is_empty(), crawl.retry_later) {
+            (false, _) => Some("crawled"),
+            (true, false) => Some("failed"),
+            (true, true) => None,
         };
         let first_error = crawl.errors.first().cloned();
+        let host_credits = crawl.credits;
         errors.extend(crawl.errors.into_iter().chain(host_errors));
         let (persist_app, persist_run, persist_now) = (app.clone(), run_id.clone(), now.clone());
-        let directory = job.directory.clone();
+        linked_sites.extend(outbound);
         let persist_host = host.clone();
         let inserted = crate::database::blocking(move || {
             let db = open_db(&persist_app)?;
             let count = leads.len();
             let inserted = append_leads(&db, &persist_run, leads)?;
-            mark_host(
-                &db,
-                &persist_host,
-                status,
-                count,
-                first_error.as_deref(),
-                &persist_now,
-            )?;
-            if let Some(directory) = directory {
-                insert_seeds(&db, &directory.list_name, &outbound, &persist_now)?;
+            if let Some(status) = status {
+                mark_host(
+                    &db,
+                    &persist_host,
+                    status,
+                    count,
+                    first_error.as_deref(),
+                    &persist_now,
+                )?;
             }
+            add_host_credits(&db, &persist_host, host_credits)?;
             Ok(inserted)
         })
         .await?;
@@ -729,24 +797,78 @@ pub(crate) async fn crawl_urls(
                 leads: lead_total,
                 host,
                 finished: false,
+                credits_used: context.credits_used(),
+                credits_remaining: context.credits_remaining(),
             },
         );
     }
     drop(stream);
 
+    // Channels 1 and 2: links out of the sites read, or a directory's entries.
+    let list_name = job
+        .directory
+        .as_ref()
+        .map_or(crate::lead_candidates::CHANNEL_LINKS, |directory| {
+            directory.list_name.as_str()
+        });
+    let candidates: Vec<_> = linked_sites
+        .into_iter()
+        .filter_map(|seed| {
+            Some(crate::lead_candidates::Candidate {
+                url: seed.url?,
+                name: seed.name,
+                context: seed.context,
+                ..Default::default()
+            })
+        })
+        .collect();
+    if !candidates.is_empty() {
+        match crate::lead_candidates::accept_candidates(&app, list_name, candidates).await {
+            // The links cost nothing; the directory pages are counted in this run.
+            Ok(report) if job.directory.is_none() => {
+                let recorded = crate::database::blocking({
+                    let app = app.clone();
+                    move || {
+                        crate::lead_candidates::record_discovery(
+                            &*open_db(&app)?,
+                            crate::lead_candidates::CHANNEL_LINKS,
+                            &report,
+                            &[],
+                        )
+                    }
+                })
+                .await;
+                if let Err(error) = recorded {
+                    errors.push(format!("Siti collegati: {error}"));
+                }
+            }
+            Ok(_) => {}
+            Err(error) => errors.push(format!("Siti collegati non salvati: {error}")),
+        }
+    }
+
     let cancelled = CANCEL.load(Ordering::SeqCst);
+    let halted = context.stop_reason();
     errors.truncate(MAX_RUN_ERRORS);
+    if let Some(reason) = &halted {
+        errors.insert(0, format!("Ricerca fermata: {reason}"));
+    }
     let (finish_app, finish_run_id) = (app.clone(), run_id.clone());
-    let status = if cancelled { "cancelled" } else { "completed" };
+    let status = match (&halted, cancelled) {
+        (Some(ContextError::BudgetReached), _) | (None, false) => "completed",
+        (Some(_), _) => "failed",
+        (None, true) => "cancelled",
+    };
+    let run_credits = context.credits_used();
     crate::database::blocking(move || {
-        finish_run(
-            &*open_db(&finish_app)?,
-            &finish_run_id,
-            status,
-            page_count,
-            pdf_found,
-            &errors,
+        let db = open_db(&finish_app)?;
+        finish_run(&db, &finish_run_id, status, page_count, pdf_found, &errors)?;
+        db.execute(
+            "UPDATE search_runs SET credits_used=?2 WHERE id=?1",
+            params![finish_run_id, run_credits as i64],
         )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
     })
     .await?;
     let _ = app.emit(
@@ -759,8 +881,15 @@ pub(crate) async fn crawl_urls(
             leads: lead_total,
             host: String::new(),
             finished: true,
+            credits_used: context.credits_used(),
+            credits_remaining: context.credits_remaining(),
         },
     );
+    if let Some(reason) = halted.filter(|reason| *reason != ContextError::BudgetReached) {
+        return Err(format!(
+            "Ricerca fermata: {reason}. I lead trovati finora sono salvati; i siti non letti restano da leggere."
+        ));
+    }
     Ok(SearchRunSummary {
         run_id,
         lead_count: lead_total,
@@ -792,9 +921,9 @@ pub(crate) async fn plan_lead_request(
     let taxonomy =
         crate::database::blocking(move || crate::lead_ai::load_taxonomy(&*open_db(&app)?)).await?;
     let ai = LeadAi::new(taxonomy).map_err(|error| format!("IA non disponibile: {error}"))?;
-    let sources: Vec<_> = crate::lead_sources::CATALOG
+    let sources: Vec<_> = DIRECTORIES
         .iter()
-        .map(|source| (source.id, source.name, source.note))
+        .map(|entry| (entry.id, entry.name, entry.note))
         .collect();
     ai.plan_request(&request, &sources).await
 }
@@ -920,6 +1049,8 @@ pub(crate) struct ExploreRequest {
     pub(crate) max_pages: i64,
     pub(crate) max_pdfs: i64,
     pub(crate) use_ai: bool,
+    /// Credits the run may spend at most (0: the settings' per-run cap).
+    pub(crate) max_credits: u64,
 }
 
 impl Default for ExploreRequest {
@@ -931,10 +1062,73 @@ impl Default for ExploreRequest {
             regione: None,
             limit: 50,
             max_pages: crate::discovery::DEFAULT_MAX_PAGES_PER_DOMAIN,
-            max_pdfs: 5,
+            max_pdfs: crate::discovery::DEFAULT_MAX_PDFS,
             use_ai: false,
+            max_credits: 0,
         }
     }
+}
+
+/// What reading the next pending sites would cost, shown before starting.
+#[derive(Debug, Serialize, PartialEq)]
+pub(crate) struct ExploreEstimate {
+    pub(crate) sites: usize,
+    /// Map 1 + pages per site, plus the PDFs of school sites.
+    pub(crate) max_credits: u64,
+}
+
+pub(crate) fn estimate_sites(seeds: &[SeedRow], max_pages: i64, max_pdfs: i64) -> ExploreEstimate {
+    let schools = seeds
+        .iter()
+        .filter(|seed| seed.context.category.as_deref() == Some("Istruzione"))
+        .count() as u64;
+    ExploreEstimate {
+        sites: seeds.len(),
+        max_credits: seeds.len() as u64 * (1 + max_pages.max(1) as u64)
+            + schools * max_pdfs.max(0) as u64,
+    }
+}
+
+fn explore_filter(
+    request: &ExploreRequest,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
+    (
+        clean(request.list_name.clone()),
+        clean(request.category.clone()),
+        clean(request.subcategory.clone()),
+        clean(request.regione.clone()),
+    )
+}
+
+#[tauri::command]
+pub(crate) async fn estimate_explore(
+    app: tauri::AppHandle,
+    request: ExploreRequest,
+) -> Result<ExploreEstimate, String> {
+    let (list_name, category, subcategory, regione) = explore_filter(&request);
+    let limit = request.limit.clamp(1, MAX_EXPLORE_SITES);
+    let (max_pages, max_pdfs) =
+        crate::discovery::clamp_run_limits(Some(request.max_pages), Some(request.max_pdfs));
+    crate::database::blocking(move || {
+        let seeds = pending_seeds(
+            &*open_db(&app)?,
+            SeedFilter {
+                list_name: list_name.as_deref(),
+                category: category.as_deref(),
+                subcategory: subcategory.as_deref(),
+                regione: regione.as_deref(),
+            },
+            limit,
+            &chrono::Utc::now().to_rfc3339(),
+        )?;
+        Ok(estimate_sites(&seeds, max_pages, max_pdfs))
+    })
+    .await
 }
 
 /// Crawl the next pending sites of a list (or of every list).
@@ -943,14 +1137,10 @@ pub(crate) async fn explore_seeds(
     app: tauri::AppHandle,
     request: ExploreRequest,
 ) -> Result<SearchRunSummary, String> {
-    let list_name = clean(request.list_name.clone());
+    let (list_name, pick_category, pick_subcategory, pick_regione) = explore_filter(&request);
     let limit = request.limit.clamp(1, MAX_EXPLORE_SITES);
     let pick_app = app.clone();
-    let (pick_list, pick_category) = (list_name.clone(), clean(request.category.clone()));
-    let (pick_subcategory, pick_regione) = (
-        clean(request.subcategory.clone()),
-        clean(request.regione.clone()),
-    );
+    let pick_list = list_name.clone();
     let seeds = crate::database::blocking(move || {
         pending_seeds(
             &*open_db(&pick_app)?,
@@ -983,6 +1173,7 @@ pub(crate) async fn explore_seeds(
             max_pdfs,
             use_ai: request.use_ai,
             directory: None,
+            max_credits: request.max_credits,
         },
         seeds,
     )
@@ -999,6 +1190,7 @@ pub(crate) struct DirectoryRequest {
     pub(crate) subcategory: Option<String>,
     pub(crate) max_pages: Option<usize>,
     pub(crate) use_ai: bool,
+    pub(crate) max_credits: u64,
 }
 
 /// Crawl a directory (catalog entry or pasted URL): its emails become leads
@@ -1009,9 +1201,9 @@ pub(crate) async fn explore_directory(
     request: DirectoryRequest,
 ) -> Result<SearchRunSummary, String> {
     let catalog = clean(request.source_id.clone()).map(|id| {
-        crate::lead_sources::CATALOG
+        DIRECTORIES
             .iter()
-            .find(|source| source.id == id && source.kind == "directory")
+            .find(|entry| entry.id == id)
             .ok_or_else(|| format!("Elenco sconosciuto: {id}"))
     });
     let catalog = catalog.transpose()?;
@@ -1019,8 +1211,8 @@ pub(crate) async fn explore_directory(
         Some(source) => (
             source.landing_url.to_owned(),
             source.name.to_owned(),
-            source.category.map(str::to_owned),
-            source.subcategory.map(str::to_owned),
+            Some(source.category.to_owned()),
+            Some(source.subcategory.to_owned()),
         ),
         None => {
             let url = request
@@ -1051,6 +1243,7 @@ pub(crate) async fn explore_directory(
                 .clamp(1, MAX_DIRECTORY_PAGES) as i64,
             max_pdfs: 0,
             use_ai: request.use_ai,
+            max_credits: request.max_credits,
             directory: Some(DirectoryInfo {
                 list_name: format!("Elenco: {name}"),
                 category: category.clone(),
@@ -1070,8 +1263,10 @@ pub(crate) async fn explore_directory(
     .await
 }
 
-/// Find the website of organizations known only by name (TinyFish Search,
-/// `<name> <comune>`, first result outside social and directory sites).
+/// Find the website of organizations known only by name, `<name> <comune>`:
+/// Google Maps when enabled (the place's city must be the comune), otherwise
+/// context.dev Search (the result must name the comune or the organization,
+/// §8 of the plan). A site that does not pass waits as `verifica`.
 #[tauri::command]
 pub(crate) async fn find_seed_sites(
     app: tauri::AppHandle,
@@ -1081,10 +1276,8 @@ pub(crate) async fn find_seed_sites(
     let list_name = clean(list_name);
     let read_app = app.clone();
     let read_list = list_name.clone();
-    let (key, pending) = crate::database::blocking(move || {
+    let pending = crate::database::blocking(move || {
         let db = open_db(&read_app)?;
-        let key = crate::tinyfish::resolve_key(&db)?
-            .ok_or_else(|| "Imposta la chiave TinyFish per cercare i siti.".to_owned())?;
         let mut statement = db
             .prepare(
                 "SELECT id, name, coalesce(comune,'') FROM search_seeds
@@ -1093,7 +1286,7 @@ pub(crate) async fn find_seed_sites(
                  ORDER BY created_at, rowid LIMIT ?2",
             )
             .map_err(|error| error.to_string())?;
-        let rows = statement
+        statement
             .query_map(params![read_list, limit.clamp(1, 200) as i64], |row| {
                 Ok((
                     row.get::<_, String>(0)?,
@@ -1103,62 +1296,43 @@ pub(crate) async fn find_seed_sites(
             })
             .map_err(|error| error.to_string())?
             .collect::<Result<Vec<_>, _>>()
-            .map_err(|error| error.to_string())?;
-        Ok((key, rows))
+            .map_err(|error| error.to_string())
     })
     .await?;
     if pending.is_empty() {
         return Err("Nessun ente senza sito in questo elenco".to_owned());
     }
-    CANCEL.store(false, Ordering::SeqCst);
-    let client = polite_client(Duration::from_secs(30)).map_err(|error| error.to_string())?;
-    let mut found: HashMap<String, Option<String>> = HashMap::new();
-    for (index, (id, name, comune)) in pending.iter().enumerate() {
-        if CANCEL.load(Ordering::Relaxed) {
-            break;
-        }
-        if index > 0 {
-            tokio::time::sleep(SEARCH_INTERVAL).await;
-        }
-        let query = format!("{name} {comune}").trim().to_owned();
-        match crate::tinyfish::search(&client, &key, &query).await {
-            Ok(urls) => {
-                found.insert(id.clone(), urls.into_iter().next());
-            }
-            Err(error) if error.contains("limite") => break,
-            Err(_) => {
-                found.insert(id.clone(), None);
-            }
-        }
-    }
-    crate::database::blocking(move || {
+    let _job = start_job()?;
+    let context = open_context(&app, 0).await?;
+    let (found, errors) = crate::lead_candidates::find_sites(&app, &context, &pending).await?;
+    let report = crate::lead_candidates::DiscoveryReport {
+        found: found.len(),
+        credits: context.credits_used(),
+        ..Default::default()
+    };
+    let stop = context.stop_reason();
+    let readable = crate::database::blocking(move || {
         let db = open_db(&app)?;
-        let now = chrono::Utc::now().to_rfc3339();
-        let mut updated = 0;
-        for (id, url) in found {
-            let url = url.as_deref().and_then(normalize_seed_url);
-            let changed = match &url {
-                Some(url) => db
-                    .execute(
-                        "UPDATE OR IGNORE search_seeds SET url=?2, host=?3 WHERE id=?1",
-                        params![id, url, url_host(url)],
-                    )
-                    .map_err(|error| error.to_string())?,
-                None => 0,
-            };
-            if changed == 0 {
-                db.execute(
-                    "UPDATE search_seeds SET status='failed', error='sito non trovato', crawled_at=?2
-                     WHERE id=?1 AND url IS NULL",
-                    params![id, now],
-                )
-                .map_err(|error| error.to_string())?;
-            }
-            updated += changed;
-        }
-        Ok(updated)
+        let readable = crate::lead_candidates::store_found_sites(&db, &found)?;
+        let report = crate::lead_candidates::DiscoveryReport {
+            accepted: readable,
+            ..report
+        };
+        crate::lead_candidates::record_discovery(
+            &db,
+            crate::lead_candidates::CHANNEL_FIND_SITES,
+            &report,
+            &errors,
+        )?;
+        Ok(readable)
     })
-    .await
+    .await?;
+    match stop {
+        Some(reason) if reason != ContextError::BudgetReached => {
+            Err(format!("Ricerca dei siti fermata: {reason}"))
+        }
+        _ => Ok(readable),
+    }
 }
 
 #[cfg(test)]
@@ -1166,6 +1340,7 @@ mod tests {
     use super::*;
     use crate::discovery::FetchedPage;
     use crate::schema::setup_schema;
+    use std::collections::HashMap;
 
     #[test]
     fn lead_crawl_seed_urls_are_normalized_and_deduplicated_per_list() {
@@ -1251,6 +1426,32 @@ mod tests {
             .unwrap()
             .is_empty()
         );
+    }
+
+    #[test]
+    fn lead_crawl_estimate_counts_map_pages_and_school_pdfs() {
+        let seed = |category: &str| SeedRow {
+            url: Some("https://a.example.test".to_owned()),
+            context: LeadContext {
+                category: Some(category.to_owned()),
+                ..LeadContext::default()
+            },
+            ..SeedRow::default()
+        };
+        let seeds = [
+            seed("Istruzione"),
+            seed("Enti religiosi"),
+            seed("Associazioni"),
+        ];
+        // Map 1 + 3 pages each, plus 2 PDFs for the one school.
+        assert_eq!(
+            estimate_sites(&seeds, 3, 2),
+            ExploreEstimate {
+                sites: 3,
+                max_credits: 14
+            }
+        );
+        assert_eq!(estimate_sites(&[], 3, 0).max_credits, 0);
     }
 
     #[test]
@@ -1368,6 +1569,7 @@ mod tests {
             max_pdfs: 0,
             use_ai: false,
             directory: None,
+            max_credits: 0,
         };
         let (leads, outbound, errors) = host_leads(
             &crawl,

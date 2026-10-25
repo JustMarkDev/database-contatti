@@ -1,8 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { LeadSource, SearchLeadList, SearchLeadView } from "../types";
-import { formatMethod, LEAD_COLUMNS, SearchPage, tabFilters } from "./SearchPage";
+import type { LeadDirectory, SearchLeadList, SearchLeadView } from "../types";
+import { emptyLeadFilters, formatMethod, LEAD_COLUMNS, SearchPage } from "./SearchPage";
 
 const {
   invoke,
@@ -110,26 +110,16 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-const source = (overrides: Partial<LeadSource>): LeadSource => ({
-  id: "x",
-  name: "x",
-  publisher: "Editore",
-  landing_url: "https://example.test/",
-  license: "CC0",
-  coverage: [],
-  emails: "si",
-  importable: true,
-  note: "",
-  kind: "dataset",
-  category: null,
-  subcategory: null,
-  ...overrides,
-});
-
-const catalog: LeadSource[] = [
-  source({ id: "dir-cai", name: "CAI sezioni", kind: "directory", category: "Associazioni" }),
-  source({ id: "miur-statali", name: "Scuole statali" }),
-  source({ id: "wikidata-religiosi", name: "Wikidata diocesi", emails: "no" }),
+const catalog: LeadDirectory[] = [
+  {
+    id: "dir-cai",
+    name: "CAI sezioni",
+    publisher: "Club Alpino Italiano",
+    landing_url: "https://www.cai.example.test/sezioni/",
+    category: "Associazioni",
+    subcategory: "CAI",
+    note: "Elenco per regione",
+  },
 ];
 
 const high = makeLead("high");
@@ -137,15 +127,41 @@ const low = makeLead("low");
 
 function defaultInvoke(command: string): Promise<unknown> {
   switch (command) {
-    case "get_tinyfish_api_key":
-    case "set_tinyfish_api_key":
-      return Promise.resolve({ configured: true, from_env: false });
-    case "find_seed_urls":
+    case "discover_by_search":
+      return Promise.resolve({
+        found: 4,
+        known: 1,
+        rejected: 0,
+        accepted: 2,
+        to_verify: 1,
+        credits: 3,
+      });
+    case "find_seed_sites":
+      return Promise.resolve(3);
+    case "estimate_explore":
+      return Promise.resolve({ sites: 3, max_credits: 12 });
+    case "list_channel_yields":
       return Promise.resolve([
-        "https://www.scuola.example.test/",
-        "https://ic.example.test/bullismo",
+        {
+          channel: "Scoperta: ricerca web",
+          discovery_credits: 2,
+          reading_credits: 8,
+          seeds: 2,
+          new_emails: 4,
+        },
       ]);
-    case "list_lead_sources":
+    case "get_contextdev_settings":
+      return Promise.resolve({ concurrency: 2, maps_enabled: false });
+    case "discover_by_maps":
+      return Promise.resolve({
+        found: 2,
+        known: 0,
+        rejected: 0,
+        accepted: 1,
+        to_verify: 0,
+        credits: 1,
+      });
+    case "list_lead_directories":
       return Promise.resolve(catalog);
     case "list_lead_taxonomy":
       return Promise.resolve([
@@ -167,7 +183,15 @@ function defaultInvoke(command: string): Promise<unknown> {
       ]);
     case "list_seed_lists":
       return Promise.resolve([
-        { list_name: "Fonte: OSM", total: 5, pending: 3, crawled: 1, failed: 0, without_site: 1 },
+        {
+          list_name: "Fonte: OSM",
+          total: 5,
+          pending: 3,
+          crawled: 1,
+          failed: 0,
+          without_site: 1,
+          to_verify: 0,
+        },
       ]);
     case "get_lead_filter_options":
       return Promise.resolve({
@@ -180,9 +204,6 @@ function defaultInvoke(command: string): Promise<unknown> {
         pec: [],
         stato: [],
       });
-    case "import_lead_source":
-      return Promise.resolve({ ...run, run_id: "run-src", page_count: 0 });
-    case "start_search_run":
     case "explore_seeds":
     case "explore_directory":
       return Promise.resolve(run);
@@ -195,12 +216,9 @@ function defaultInvoke(command: string): Promise<unknown> {
   }
 }
 
-async function renderPage(tab: "Dati aperti" | "Ricerca web" = "Dati aperti") {
+async function renderPage() {
   render(<SearchPage active={true} onContactsChanged={onContactsChanged} />);
   await screen.findAllByText("high@example.test");
-  if (tab === "Ricerca web") {
-    await userEvent.click(screen.getByRole("tab", { name: /Ricerca web/ }));
-  }
 }
 
 afterEach(() => {
@@ -248,7 +266,7 @@ describe("SearchPage", () => {
     render(<SearchPage active={true} onContactsChanged={onContactsChanged} />);
     await screen.findByText("IC Esempio · Segreteria");
     expect(invoke).toHaveBeenCalledWith("list_search_leads", {
-      filters: tabFilters("open"),
+      filters: emptyLeadFilters(),
       limit: 100,
       offset: 0,
     });
@@ -271,39 +289,12 @@ describe("SearchPage", () => {
     expect(within(origin).getByText("Archivio web + IA")).toBeInTheDocument();
   });
 
-  it("imports a dataset and narrows the table to that run", async () => {
-    await renderPage();
-    const names = screen
-      .getAllByRole("listitem")
-      .map((item) => item.textContent ?? "")
-      .filter((text) => text.includes("Editore"));
-    expect(names).toHaveLength(1);
-    expect(names[0]).toContain("Scuole statali");
-    expect(names.join()).not.toContain("CAI sezioni");
-    expect(screen.queryByLabelText("Descrizione della ricerca lead")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Importa Scuole statali" }));
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("import_lead_source", { sourceId: "miur-statali" }),
-    );
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("list_search_leads", {
-        filters: { ...tabFilters("open"), run: { include: ["run-src"], exclude: [] } },
-        limit: 100,
-        offset: 0,
-      }),
-    );
-    expect(toastSuccess).toHaveBeenCalledWith("Scuole statali: 2 lead");
-  });
-
   it("reads the chosen public sites with the IA, chaining each list's sites", async () => {
-    await renderPage("Ricerca web");
+    await renderPage();
     const start = screen.getByRole("button", { name: "Leggi i siti scelti" });
     expect(start).toBeDisabled();
     await userEvent.click(
       within(screen.getByText("CAI sezioni").closest("li")!).getByRole("checkbox"),
-    );
-    await userEvent.click(
-      within(screen.getByText("Wikidata diocesi").closest("li")!).getByRole("checkbox"),
     );
     await userEvent.click(
       within(screen.getByText("Fonte: OSM").closest("li")!).getByRole("checkbox"),
@@ -311,24 +302,54 @@ describe("SearchPage", () => {
     await userEvent.click(start);
     const exploreCalls = () =>
       invoke.mock.calls.filter(([command]) => command === "explore_seeds").map(([, args]) => args);
-    await waitFor(() => expect(exploreCalls()).toHaveLength(3));
+    await waitFor(() => expect(exploreCalls()).toHaveLength(2));
     expect(invoke).toHaveBeenCalledWith("explore_directory", {
       request: { sourceId: "dir-cai", useAi: true },
     });
-    expect(invoke).toHaveBeenCalledWith("import_lead_source", { sourceId: "wikidata-religiosi" });
-    const base = { limit: 50, maxPages: 10, maxPdfs: 5, useAi: true };
+    const base = { limit: 50, maxPages: 3, maxPdfs: 0, useAi: true };
+    expect(confirmDialog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: expect.stringContaining("≈ 6 siti, al massimo ≈ 24 crediti"),
+      }),
+    );
+    expect(invoke).toHaveBeenCalledWith("estimate_explore", {
+      request: { ...base, listName: "Fonte: OSM" },
+    });
     expect(exploreCalls()).toEqual([
-      { request: { ...base, listName: "Fonte: Wikidata diocesi" } },
       { request: { ...base, listName: "Elenco: CAI sezioni" } },
       { request: { ...base, listName: "Fonte: OSM" } },
     ]);
+  });
+
+  it("reads nothing when the estimate is declined, and uses the chosen pages per site", async () => {
+    await renderPage();
+    await userEvent.selectOptions(screen.getByLabelText("Pagine per sito"), "5");
+    await userEvent.click(
+      within(screen.getByText("Fonte: OSM").closest("li")!).getByRole("checkbox"),
+    );
+    confirmDialog.mockResolvedValueOnce(false);
+    await userEvent.click(screen.getByRole("button", { name: "Leggi i siti scelti" }));
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalled());
+    expect(invoke).toHaveBeenCalledWith("estimate_explore", {
+      request: expect.objectContaining({ listName: "Fonte: OSM", maxPages: 5 }),
+    });
+    expect(invoke).not.toHaveBeenCalledWith("explore_seeds", expect.anything());
+  });
+
+  it("shows the credits per new address of each discovery channel", async () => {
+    await renderPage();
+    const table = await screen.findByRole("table", { name: "Resa per fonte" });
+    const cells = within(table)
+      .getAllByRole("cell")
+      .map((cell) => cell.textContent);
+    expect(cells).toEqual(["Scoperta: ricerca web", "2", "10", "4", "2,5"]);
   });
 
   it("keeps reading the other chosen sites when one of them fails", async () => {
     invoke.mockImplementation((command: string) =>
       command === "explore_directory" ? Promise.reject("HTTP 500") : defaultInvoke(command),
     );
-    await renderPage("Ricerca web");
+    await renderPage();
     await userEvent.click(
       within(screen.getByText("CAI sezioni").closest("li")!).getByRole("checkbox"),
     );
@@ -347,7 +368,7 @@ describe("SearchPage", () => {
     invoke.mockImplementation((command: string) =>
       command === "explore_seeds" ? pending.promise : defaultInvoke(command),
     );
-    await renderPage("Ricerca web");
+    await renderPage();
     await userEvent.click(
       within(screen.getByText("Fonte: OSM").closest("li")!).getByRole("checkbox"),
     );
@@ -362,10 +383,14 @@ describe("SearchPage", () => {
           leads: 7,
           host: "a.example.test",
           finished: false,
+          credits_used: 4,
+          credits_remaining: 900,
         },
       });
     });
-    expect(await screen.findByText("2 di 5 siti, 7 lead · a.example.test")).toBeInTheDocument();
+    expect(
+      await screen.findByText("2 di 5 siti, 7 lead, 4 crediti · a.example.test"),
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Ferma esplorazione" }));
     expect(invoke).toHaveBeenCalledWith("cancel_lead_crawl");
     await act(async () => {
@@ -379,94 +404,110 @@ describe("SearchPage", () => {
     category: "Turismo e promozione territoriale",
     subcategory: "Pro Loco",
     regione: "Lombardia",
-    source_ids: ["miur-statali", "dir-cai"],
+    source_ids: ["dir-cai"],
     web_query: "pro loco Lombardia email",
   };
 
-  it("turns a free-form request into sources, collected sites and a web search", async () => {
+  it("turns a free-form request into directories, collected sites and a web search", async () => {
     invoke.mockImplementation((command: string) =>
       command === "plan_lead_request" ? Promise.resolve(plan) : defaultInvoke(command),
     );
-    await renderPage("Ricerca web");
+    await renderPage();
     await userEvent.type(
       screen.getByLabelText("Descrizione della ricerca lead"),
       "tutte le pro loco della Lombardia",
     );
     await userEvent.click(screen.getByRole("button", { name: "Cerca" }));
+    const scoped = {
+      category: "Turismo e promozione territoriale",
+      subcategory: "Pro Loco",
+      regione: "Lombardia",
+      limit: 50,
+      maxPages: 3,
+      maxPdfs: 0,
+      useAi: true,
+    };
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("start_search_run", {
-        query: "tutte le pro loco della Lombardia",
-        seedUrls: ["https://www.scuola.example.test/", "https://ic.example.test/bullismo"],
-        maxPagesPerDomain: 20,
-        maxPdfs: 5,
-        useAi: true,
+      expect(invoke).toHaveBeenCalledWith("explore_seeds", {
+        request: { listName: "Scoperta: ricerca web", ...scoped },
       }),
     );
+    expect(invoke).not.toHaveBeenCalledWith("discover_by_maps", expect.anything());
+    expect(invoke).toHaveBeenCalledWith("discover_by_search", {
+      request: {
+        query: "pro loco Lombardia email",
+        category: "Turismo e promozione territoriale",
+        subcategory: "Pro Loco",
+        regione: "Lombardia",
+      },
+    });
+    expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining("2 siti nuovi"));
     expect(invoke).toHaveBeenCalledWith("plan_lead_request", {
       request: "tutte le pro loco della Lombardia",
     });
-    expect(invoke).toHaveBeenCalledWith("import_lead_source", { sourceId: "miur-statali" });
     expect(invoke).toHaveBeenCalledWith("explore_directory", {
       request: { sourceId: "dir-cai", useAi: true },
     });
     expect(invoke).toHaveBeenCalledWith("explore_seeds", {
-      request: {
-        listName: null,
-        category: "Turismo e promozione territoriale",
-        subcategory: "Pro Loco",
-        regione: "Lombardia",
-        limit: 50,
-        maxPages: 10,
-        maxPdfs: 5,
-        useAi: true,
-      },
+      request: { listName: null, ...scoped },
     });
-    expect(invoke).toHaveBeenCalledWith("find_seed_urls", { query: "pro loco Lombardia email" });
   });
 
-  it("still runs the planned sources without a TinyFish key and offers the key form", async () => {
+  it("adds Google Maps to the request only when it is enabled", async () => {
     invoke.mockImplementation((command: string) => {
-      if (command === "get_tinyfish_api_key") {
-        return Promise.resolve({ configured: false, from_env: false });
+      if (command === "get_contextdev_settings") {
+        return Promise.resolve({ concurrency: 2, maps_enabled: true });
       }
       return command === "plan_lead_request" ? Promise.resolve(plan) : defaultInvoke(command);
     });
-    await renderPage("Ricerca web");
+    await renderPage();
     await userEvent.type(screen.getByLabelText("Descrizione della ricerca lead"), "pro loco");
     await userEvent.click(screen.getByRole("button", { name: "Cerca" }));
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("import_lead_source", { sourceId: "miur-statali" }),
+      expect(invoke).toHaveBeenCalledWith("explore_seeds", {
+        request: expect.objectContaining({ listName: "Scoperta: Google Maps" }),
+      }),
     );
-    expect(invoke).not.toHaveBeenCalledWith("find_seed_urls", expect.anything());
-    await userEvent.type(screen.getByLabelText("Chiave API TinyFish"), " tf-key ");
-    await userEvent.click(screen.getByRole("button", { name: "Salva chiave" }));
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("set_tinyfish_api_key", { apiKey: "tf-key" }),
-    );
-  });
-
-  it("warns about the tables of an import that did not load", async () => {
-    invoke.mockImplementation((command: string) =>
-      command === "import_lead_source"
-        ? Promise.resolve({ ...run, run_id: "run-src", errors: ["albo-x: HTTP 500"] })
-        : defaultInvoke(command),
-    );
-    await renderPage();
-    await userEvent.click(screen.getByRole("button", { name: "Importa Scuole statali" }));
-    await waitFor(() =>
-      expect(toastWarning).toHaveBeenCalledWith("Tabelle non caricate: albo-x: HTTP 500"),
-    );
-  });
-
-  it("imports every open-data registry with one click", async () => {
-    await renderPage();
-    await userEvent.click(screen.getByRole("button", { name: "Importa tutto" }));
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("import_lead_source", { sourceId: "miur-statali" }),
-    );
-    expect(invoke).not.toHaveBeenCalledWith("import_lead_source", {
-      sourceId: "wikidata-religiosi",
+    expect(invoke).toHaveBeenCalledWith("discover_by_maps", {
+      request: {
+        category: "Turismo e promozione territoriale",
+        subcategory: "Pro Loco",
+        regione: "Lombardia",
+      },
     });
+    expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining("3 siti nuovi"));
+  });
+
+  it("does not read the search list when the web search finds no new site", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "discover_by_search") {
+        return Promise.resolve({
+          found: 2,
+          known: 2,
+          rejected: 0,
+          accepted: 0,
+          to_verify: 0,
+          credits: 1,
+        });
+      }
+      return command === "plan_lead_request" ? Promise.resolve(plan) : defaultInvoke(command);
+    });
+    await renderPage();
+    await userEvent.type(screen.getByLabelText("Descrizione della ricerca lead"), "pro loco");
+    await userEvent.click(screen.getByRole("button", { name: "Cerca" }));
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
+    expect(invoke).not.toHaveBeenCalledWith("explore_seeds", {
+      request: expect.objectContaining({ listName: "Scoperta: ricerca web" }),
+    });
+  });
+
+  it("finds the sites of organizations known only by name", async () => {
+    await renderPage();
+    await userEvent.click(screen.getByRole("button", { name: "Trova i siti di Fonte: OSM" }));
+    await waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("find_seed_sites", { listName: "Fonte: OSM", limit: 50 }),
+    );
+    expect(toastSuccess).toHaveBeenCalledWith("Fonte: OSM: 3 siti trovati da leggere");
   });
 
   it("paginates in bounded 100-row pages", async () => {
@@ -520,7 +561,7 @@ describe("SearchPage", () => {
     await renderPage();
     await userEvent.click(screen.getByRole("button", { name: "Aggiungi al database" }));
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("promote_search_leads", { filters: tabFilters("open") }),
+      expect(invoke).toHaveBeenCalledWith("promote_search_leads", { filters: emptyLeadFilters() }),
     );
     expect(toastSuccess).toHaveBeenCalledWith(
       "Lead aggiunti al database: 2 nuovi, 0 aggiornati, 1 in blacklist, 1 in attesa di verifica del dominio",
@@ -532,30 +573,27 @@ describe("SearchPage", () => {
     expect(invoke).not.toHaveBeenCalledWith("promote_search_leads", expect.anything());
   });
 
-  it("keeps the two tabs apart: each lists and promotes only its own runs", async () => {
-    await renderPage("Ricerca web");
+  it("lists and promotes every run kind from one table", async () => {
+    await renderPage();
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("list_search_leads", {
-        filters: tabFilters("web"),
+        filters: emptyLeadFilters(),
         limit: 100,
         offset: 0,
       }),
     );
-    expect(invoke).toHaveBeenCalledWith("get_lead_filter_options", {
-      kinds: ["web", "directory", "crawl"],
-    });
-    expect(
-      screen.queryByRole("button", { name: "Importa Scuole statali" }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText("Fonte: OSM")).toBeInTheDocument();
+    expect(invoke).toHaveBeenCalledWith("get_lead_filter_options", { kinds: [] });
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Importa/ })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Aggiungi al database" }));
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("promote_search_leads", { filters: tabFilters("web") }),
+      expect(invoke).toHaveBeenCalledWith("promote_search_leads", { filters: emptyLeadFilters() }),
     );
   });
 
   it("formats extraction methods in words", () => {
     expect(formatMethod("open_data")).toBe("Dati aperti");
+    expect(formatMethod("contextdev+ia")).toBe("Sito web (context.dev) + IA");
     expect(formatMethod("tinyfish+ia")).toBe("Sito (TinyFish) + IA");
     expect(formatMethod(null)).toBe("—");
   });

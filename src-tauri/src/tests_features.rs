@@ -2706,13 +2706,13 @@ fn discovery_pages() -> Vec<FetchedPage> {
 
 #[test]
 fn search_discovery_migration_creates_tables_fresh_and_upgrades_from_v46() {
-    assert_eq!(LATEST_SCHEMA_VERSION, 65);
+    assert_eq!(LATEST_SCHEMA_VERSION, 66);
 
     let db = Connection::open_in_memory().unwrap();
     setup_schema(&db).unwrap();
     assert!(has_table(&db, "search_runs").unwrap());
     assert!(has_table(&db, "search_leads").unwrap());
-    assert_eq!(table_columns_for_test(&db, "search_runs").len(), 14);
+    assert_eq!(table_columns_for_test(&db, "search_runs").len(), 15);
     assert_eq!(table_columns_for_test(&db, "search_leads").len(), 22);
     let index_count: i64 = db
         .query_row(
@@ -2990,11 +2990,11 @@ fn lead_promotion_fills_empty_contact_fields_without_overwriting_known_ones() {
             query_text: "Fonte: ANA",
             source_id: Some("ana-sezioni"),
             seed_count: 0,
-            page_count: 0,
-            pdf_found: 0,
-            errors: &[],
             now: "2026-09-30T10:00:00Z",
         },
+        0,
+        0,
+        &[],
         [lead],
     )
     .unwrap();
@@ -3149,11 +3149,11 @@ fn insert_source_lead(
             query_text: "Fonte",
             source_id: Some(source_id),
             seed_count: 0,
-            page_count: 0,
-            pdf_found: 0,
-            errors: &[],
             now: "2026-09-30T10:00:00Z",
         },
+        0,
+        0,
+        &[],
         [lead],
     )
     .unwrap()
@@ -3291,7 +3291,7 @@ fn lead_source_catalog_migration_upgrades_from_v47_keeping_sandbox_rows() {
     db.pragma_update(None, "user_version", 47).unwrap();
     migrate_database(&mut db, None, false).unwrap();
 
-    assert_eq!(table_columns_for_test(&db, "search_runs").len(), 14);
+    assert_eq!(table_columns_for_test(&db, "search_runs").len(), 15);
     assert_eq!(table_columns_for_test(&db, "search_leads").len(), 22);
     let (email, regione): (String, Option<String>) = db
         .query_row(
@@ -3790,13 +3790,19 @@ fn search_discovery_validate_seeds_rejects_empty_invalid_and_oversized() {
         let error = validate_seeds(&[seed.to_owned()]).unwrap_err();
         assert!(error.contains("URL non valido"), "{seed}: {error}");
     }
+
+    // Internal addresses never reach context.dev.
+    for seed in ["http://localhost:8080/contatti", "https://192.168.1.10/"] {
+        let error = validate_seeds(&[seed.to_owned()]).unwrap_err();
+        assert!(error.contains("non pubblico"), "{seed}: {error}");
+    }
 }
 
 #[test]
 fn search_discovery_validate_seeds_accepts_and_trims_http_seeds() {
     let seeds = validate_seeds(&[
         " https://prima.example.test/ ".to_owned(),
-        "http://localhost:8080/contatti".to_owned(),
+        "http://terza.example.test:8080/contatti".to_owned(),
         "https://seconda.example.test".to_owned(),
     ])
     .unwrap();
@@ -3804,7 +3810,7 @@ fn search_discovery_validate_seeds_accepts_and_trims_http_seeds() {
         seeds,
         vec![
             "https://prima.example.test/".to_owned(),
-            "http://localhost:8080/contatti".to_owned(),
+            "http://terza.example.test:8080/contatti".to_owned(),
             "https://seconda.example.test".to_owned(),
         ]
     );
@@ -3817,7 +3823,7 @@ fn search_discovery_run_limits_clamp_to_documented_bounds() {
         (DEFAULT_MAX_PAGES_PER_DOMAIN, DEFAULT_MAX_PDFS)
     );
     assert_eq!(clamp_run_limits(Some(0), Some(-1)), (1, 0));
-    assert_eq!(clamp_run_limits(Some(5), Some(3)), (5, 3));
+    assert_eq!(clamp_run_limits(Some(4), Some(1)), (4, 1));
     assert_eq!(
         clamp_run_limits(Some(1_000), Some(1_000)),
         (MAX_PAGES_PER_DOMAIN, MAX_PDF_LINKS)
@@ -3831,7 +3837,11 @@ fn tauri_commands_touching_state_never_run_on_the_ui_thread() {
         r"#\[tauri::command\]\s*\n(?:\s*#\[[^\n]*\]\n)*\s*(?:pub(?:\(crate\))? )?(async )?fn (\w+)",
     )
     .unwrap();
-    let allowed = ["control_import", "list_lead_sources", "cancel_lead_crawl"];
+    let allowed = [
+        "control_import",
+        "list_lead_directories",
+        "cancel_lead_crawl",
+    ];
     let mut sync_commands = Vec::new();
     let mut pending = vec![std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),

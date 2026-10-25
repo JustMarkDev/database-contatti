@@ -581,3 +581,36 @@ pub(crate) async fn call_cascade_batch_unified(
     });
     Ok((envelope.to_string(), results))
 }
+
+/// Jev alone, no generative escalation: the `Apply` judgments (at or above
+/// the policy's confidence) as `id -> (category key, subcategory key)`. Items
+/// Jev is unsure about are left out; the caller decides what to do with them.
+pub(crate) async fn jev_classify(
+    typesafe: &TypeSafeClient,
+    items: Vec<BatchContactItem>,
+    taxonomy: &[(String, Vec<String>)],
+    display_names: &HashMap<(String, Option<String>, String), String>,
+    policy: SpendPolicy,
+) -> Result<HashMap<String, (String, Option<String>)>, ProviderError> {
+    typesafe.ensure_warm().await;
+    let mut accepted = HashMap::new();
+    for chunk in items.chunks(JEV_CONTACT_BATCH) {
+        let (outcomes, _) =
+            run_jev_contact_batch(typesafe, chunk.to_vec(), taxonomy, display_names, policy).await;
+        for outcome in outcomes {
+            match outcome {
+                JevOutcome::Ready(pass) if pass.action == CascadeAction::Apply => {
+                    let subcategory = (pass.judgment.subcategory.choice != "none_fit")
+                        .then(|| pass.judgment.subcategory.choice.clone());
+                    accepted.insert(
+                        pass.item.id.clone(),
+                        (pass.judgment.category.choice.clone(), subcategory),
+                    );
+                }
+                JevOutcome::Fatal(error) => return Err(error),
+                _ => {}
+            }
+        }
+    }
+    Ok(accepted)
+}

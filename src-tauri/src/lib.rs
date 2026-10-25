@@ -786,6 +786,7 @@ pub mod candidates;
 mod classification_benchmarks;
 mod classification_core;
 pub mod contacts;
+mod contextdev;
 pub mod database;
 pub mod database_backup;
 pub mod deterministic_rules;
@@ -793,14 +794,14 @@ mod discovery;
 pub mod gazetteer;
 pub mod imports;
 mod lead_ai;
+mod lead_candidates;
 mod lead_crawl;
-mod lead_sources;
+mod lead_directories;
 pub mod mailbox_verification;
 mod mcp;
 pub mod parsing;
 pub mod schema;
 pub mod taxonomy;
-mod tinyfish;
 
 pub(crate) use ai_enrichment::{
     load_ai_candidate, load_ai_candidate_ids, normalize_extracted_province,
@@ -858,8 +859,7 @@ pub fn run() {
             discovery::delete_search_run,
             discovery::export_search_leads_txt,
             discovery::promote_search_leads,
-            lead_sources::list_lead_sources,
-            lead_sources::import_lead_source,
+            lead_directories::list_lead_directories,
             lead_crawl::list_seed_lists,
             lead_crawl::delete_seed_list,
             lead_crawl::add_contact_seeds,
@@ -870,9 +870,15 @@ pub fn run() {
             lead_crawl::plan_lead_request,
             lead_crawl::cancel_lead_crawl,
             lead_crawl::list_lead_taxonomy,
-            tinyfish::get_tinyfish_api_key,
-            tinyfish::set_tinyfish_api_key,
-            tinyfish::find_seed_urls,
+            lead_candidates::discover_by_search,
+            lead_candidates::discover_by_maps,
+            contextdev::get_contextdev_settings,
+            contextdev::get_contextdev_usage,
+            lead_crawl::estimate_explore,
+            lead_candidates::list_channel_yields,
+            contextdev::set_contextdev_settings,
+            contextdev::get_contextdev_api_key,
+            contextdev::set_contextdev_api_key,
             imports::get_filter_options,
             imports::refresh_dashboard,
             imports::delete_contact,

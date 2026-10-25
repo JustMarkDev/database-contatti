@@ -140,7 +140,7 @@ function defaultInvoke(command: string) {
       has_next: false,
     });
   if (
-    ["list_search_runs", "list_seed_lists", "list_lead_sources", "list_lead_taxonomy"].includes(
+    ["list_search_runs", "list_seed_lists", "list_lead_directories", "list_lead_taxonomy"].includes(
       command,
     )
   )
@@ -192,6 +192,13 @@ function defaultInvoke(command: string) {
     return Promise.resolve({
       configured: true,
       from_env: true,
+    });
+  if (command === "get_contextdev_settings")
+    return Promise.resolve({
+      concurrency: 2,
+      maps_enabled: false,
+      reserve: 100,
+      max_credits_per_run: 500,
     });
   if (command === "list_deterministic_catalogs") return Promise.resolve([]);
   if (command === "list_ai_run_failures") return Promise.resolve([]);
@@ -1209,6 +1216,65 @@ describe("App orchestration", () => {
     expect(invoke).not.toHaveBeenCalledWith("clear_database");
     await userEvent.click(await screen.findByRole("button", { name: "Elimina definitivamente" }));
     expect(invoke).toHaveBeenCalledWith("clear_database");
+  });
+
+  it("saves the context.dev API key from Settings", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "set_contextdev_api_key")
+        return Promise.resolve({ configured: true, from_env: false });
+      return defaultInvoke(command);
+    });
+    render(<App />);
+    await screen.findByText("info@example.it");
+    await userEvent.click(screen.getByTitle("Impostazioni"));
+    await userEvent.type(await screen.findByLabelText("Chiave API context.dev"), " cd-key ");
+    const form = screen.getByLabelText("Chiave API context.dev").closest("form")!;
+    await userEvent.click(within(form).getByRole("button", { name: "Salva chiave" }));
+    expect(invoke).toHaveBeenCalledWith("set_contextdev_api_key", { apiKey: "cd-key" });
+    expect(await within(form.parentElement!).findByText("Chiave configurata")).toBeInTheDocument();
+    expect(screen.getByLabelText("Chiave API context.dev")).toHaveValue("");
+  });
+
+  it("shows the context.dev balance and why runs would not start", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_contextdev_usage")
+        return Promise.resolve({
+          usage: {
+            credits_remaining: 900,
+            next_refill: null,
+            auto_topup: { enabled: true, monthly_budget_credits: null },
+          },
+          problem: "Auto-Topup di context.dev è attivo senza budget mensile",
+        });
+      return defaultInvoke(command);
+    });
+    render(<App />);
+    await screen.findByText("info@example.it");
+    await userEvent.click(screen.getByTitle("Impostazioni"));
+    expect(await screen.findByText("900 crediti rimasti")).toBeInTheDocument();
+    expect(screen.getByText("Auto-Topup senza budget")).toBeInTheDocument();
+    expect(
+      screen.getByText("Auto-Topup di context.dev è attivo senza budget mensile"),
+    ).toBeInTheDocument();
+  });
+
+  it("turns Google Maps discovery on from Settings", async () => {
+    invoke.mockImplementation((command: string, args?: { settings?: unknown }) => {
+      if (command === "set_contextdev_settings") return Promise.resolve(args?.settings);
+      return defaultInvoke(command);
+    });
+    render(<App />);
+    await screen.findByText("info@example.it");
+    await userEvent.click(screen.getByTitle("Impostazioni"));
+    const maps = await screen.findByLabelText(
+      "Cerca i siti anche su Google Maps (costo da misurare)",
+    );
+    expect(maps).not.toBeChecked();
+    await userEvent.click(maps);
+    expect(invoke).toHaveBeenCalledWith("set_contextdev_settings", {
+      settings: { concurrency: 2, maps_enabled: true, reserve: 100, max_credits_per_run: 500 },
+    });
+    await waitFor(() => expect(maps).toBeChecked());
   });
 
   it("gates blacklist clearing behind two confirmations", async () => {

@@ -150,23 +150,19 @@ export type SearchLeadView = {
   /** `nuovo`, `completa` (promotion fills empty contact fields) or `nel_database`. */
   stato: "nuovo" | "completa" | "nel_database";
 };
-export type LeadSource = {
+export type LeadDirectory = {
   id: string;
   name: string;
   publisher: string;
   landing_url: string;
-  license: string;
-  coverage: string[];
-  emails: "si" | "parziale" | "no";
-  importable: boolean;
+  /** Taxonomy the directory's leads and seeds inherit. */
+  category: string;
+  subcategory: string;
   note: string;
-  kind: "dataset" | "directory";
-  category: string | null;
-  subcategory: string | null;
 };
 export type LeadFilters = {
   query: string;
-  /** Run kinds: `source` (Dati aperti) or `web`, `directory`, `crawl` (Ricerca web). */
+  /** Run kinds: `web`, `directory`, `crawl`, `discovery` (`source`: older open-data imports). */
   kind: FieldFilter;
   run: FieldFilter;
   category: FieldFilter;
@@ -190,7 +186,7 @@ export type LeadFilterOptions = {
 export type SearchRunView = {
   id: string;
   label: string;
-  kind: "web" | "source" | "directory" | "crawl";
+  kind: "web" | "source" | "directory" | "crawl" | "discovery";
   status: "running" | "completed" | "cancelled" | "failed";
   lead_count: number;
   page_count: number;
@@ -204,6 +200,42 @@ export type SeedListView = {
   crawled: number;
   failed: number;
   without_site: number;
+  /** Not confidently classified or not confirmed: stored, never read. */
+  to_verify: number;
+};
+export type ContextDevSettings = {
+  /** Requests in flight the plan allows (Free 2, Developer 10, Pro 100). */
+  concurrency: number;
+  maps_enabled: boolean;
+  /** Credits kept aside: runs refuse to start below it. */
+  reserve: number;
+  /** Credits one run or discovery may spend; 0 for no cap. */
+  max_credits_per_run: number;
+};
+/** `GET /org/usage` with the reason runs would refuse to start. */
+export type ContextDevUsage = {
+  usage: {
+    credits_remaining: number;
+    next_refill: { at: string; credits: number } | null;
+    auto_topup: { enabled: boolean; monthly_budget_credits: number | null };
+  };
+  problem: string | null;
+};
+export type ExploreEstimate = { sites: number; max_credits: number };
+export type ChannelYield = {
+  channel: string;
+  discovery_credits: number;
+  reading_credits: number;
+  seeds: number;
+  new_emails: number;
+};
+export type DiscoveryReport = {
+  found: number;
+  known: number;
+  rejected: number;
+  accepted: number;
+  to_verify: number;
+  credits: number;
 };
 export type CrawlProgress = {
   run_id: string;
@@ -213,6 +245,9 @@ export type CrawlProgress = {
   leads: number;
   host: string;
   finished: boolean;
+  /** context.dev credits this run has spent so far. */
+  credits_used: number;
+  credits_remaining: number | null;
 };
 export type LeadPlan = {
   category: string | null;

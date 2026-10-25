@@ -976,3 +976,28 @@ pub(crate) fn migrate_lead_sandbox_mirror(db: &Connection) -> Result<(), String>
     )
     .map_err(|error| error.to_string())
 }
+
+/// Migration 66: context.dev reads the sites and charges credits. Runs and
+/// seeds record what they spent, so a run can stop at its cap and each
+/// discovery channel can be measured. The TinyFish key leaves the database:
+/// TinyFish is gone, and the key, no longer listed among the secrets kept out
+/// of backups, would otherwise travel with them.
+pub(crate) fn migrate_contextdev_credits(db: &Connection) -> Result<(), String> {
+    for table in ["search_runs", "search_seeds"] {
+        if !table_columns(db, table)?
+            .iter()
+            .any(|column| column == "credits_used")
+        {
+            db.execute(
+                &format!("ALTER TABLE {table} ADD COLUMN credits_used INTEGER NOT NULL DEFAULT 0"),
+                [],
+            )
+            .map_err(|error| error.to_string())?;
+        }
+    }
+    if has_table(db, "app_settings")? {
+        db.execute("DELETE FROM app_settings WHERE key='tinyfish_api_key'", [])
+            .map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}

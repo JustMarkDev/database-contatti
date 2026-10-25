@@ -1,4 +1,17 @@
-use super::*;
+use crate::gazetteer::{norm, place_display_name};
+use crate::parsing::{PROVINCE_REGIONS, REGIONS};
+use rusqlite::Connection;
+use std::collections::HashMap;
+
+fn present(value: &str) -> Option<&str> {
+    let value = value.trim();
+    let lower = value.to_ascii_lowercase();
+    if value.is_empty() || lower == "null" || lower == "non disponibile" {
+        None
+    } else {
+        Some(value)
+    }
+}
 
 /// Canonical `(comune, provincia, regione)` for the source's raw geography.
 /// Municipality names resolve through the gazetteer; a name shared by several
@@ -58,29 +71,6 @@ impl Geography {
             }
         }
         Ok(Self { municipalities })
-    }
-
-    pub(crate) fn is_municipality(&self, name: &str) -> bool {
-        self.municipalities.contains_key(&norm(name))
-    }
-
-    /// Exact municipality inside `regione`, without the readable fallback of
-    /// `resolve`: ANA group names are often hamlets or city districts.
-    pub(crate) fn municipality_in(
-        &self,
-        comune: &str,
-        regione: &str,
-    ) -> Option<(String, String, String)> {
-        let found: Vec<_> = self
-            .municipalities
-            .get(&norm(comune))?
-            .iter()
-            .filter(|(_, _, region)| norm(region) == norm(regione))
-            .collect();
-        match found.as_slice() {
-            [only] => Some((*only).clone()),
-            _ => None,
-        }
     }
 
     pub(crate) fn resolve(
@@ -153,16 +143,6 @@ pub(super) fn canonical_province(value: &str) -> Option<&'static str> {
                 .find(|province| norm(province) == wanted)
         })
         .flatten()
-}
-
-/// Title case for values written all in capitals (`DI PIETRO`); mixed-case
-/// values are kept as written (`McDonald`).
-pub(super) fn tidy_case(value: &str) -> String {
-    if value.chars().any(char::is_lowercase) {
-        value.trim().to_owned()
-    } else {
-        title_case(value)
-    }
 }
 
 pub(crate) fn title_case(value: &str) -> String {
