@@ -378,8 +378,7 @@ pub(crate) async fn discover_by_search(
         return Err("Scrivi cosa cercare o scegli sottocategoria e regione.".to_owned());
     }
     let _job = crate::lead_crawl::start_job()?;
-    let budget = (request.max_credits > 0).then_some(request.max_credits);
-    let context = crate::lead_crawl::open_context(&app, budget).await?;
+    let context = crate::lead_crawl::open_context(&app, request.max_credits).await?;
     let mut candidates = Vec::new();
     let mut errors = Vec::new();
     for query in &queries {
@@ -409,6 +408,65 @@ pub(crate) async fn discover_by_search(
     })
     .await?;
     Ok(report)
+}
+
+/// What one discovery channel cost and returned: the plan's "crediti per lead utile".
+#[derive(Debug, Serialize, PartialEq)]
+pub(crate) struct ChannelYield {
+    pub(crate) channel: String,
+    pub(crate) discovery_credits: i64,
+    pub(crate) reading_credits: i64,
+    pub(crate) seeds: i64,
+    /// Addresses of the channel's sites not already in contacts, automatic
+    /// mailboxes excluded.
+    // shortcut: mailbox routing (MX) is not checked here; join the DNS cache
+    // when yields start deciding which channel to switch off.
+    pub(crate) new_emails: i64,
+}
+
+pub(crate) fn channel_yields(db: &Connection) -> Result<Vec<ChannelYield>, String> {
+    let mut statement = db
+        .prepare(
+            "WITH channels(channel) AS (
+                SELECT list_name FROM search_seeds
+                 WHERE list_name LIKE 'Scoperta: %' OR list_name LIKE 'Elenco: %'
+                UNION SELECT query_text FROM search_runs WHERE kind='discovery'
+             )
+             SELECT c.channel,
+                (SELECT coalesce(SUM(credits_used),0) FROM search_runs
+                  WHERE kind IN ('discovery','directory') AND query_text=c.channel),
+                (SELECT coalesce(SUM(credits_used),0) FROM search_seeds WHERE list_name=c.channel),
+                (SELECT COUNT(*) FROM search_seeds WHERE list_name=c.channel),
+                (SELECT COUNT(DISTINCT l.email_comparison_key) FROM search_leads l
+                  JOIN search_seeds s ON s.list_name=c.channel AND l.website='https://'||s.host
+                  WHERE NOT EXISTS (SELECT 1 FROM contacts k
+                                    WHERE k.email_comparison_key=l.email_comparison_key)
+                    AND l.email NOT LIKE 'noreply%' AND l.email NOT LIKE 'no-reply%'
+                    AND l.email NOT LIKE 'donotreply%' AND l.email NOT LIKE 'mailer-daemon%'
+                    AND l.email NOT LIKE 'postmaster%')
+             FROM channels c ORDER BY c.channel",
+        )
+        .map_err(|error| error.to_string())?;
+    statement
+        .query_map([], |row| {
+            Ok(ChannelYield {
+                channel: row.get(0)?,
+                discovery_credits: row.get(1)?,
+                reading_credits: row.get(2)?,
+                seeds: row.get(3)?,
+                new_emails: row.get(4)?,
+            })
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())
+}
+
+#[tauri::command]
+pub(crate) async fn list_channel_yields(
+    app: tauri::AppHandle,
+) -> Result<Vec<ChannelYield>, String> {
+    crate::database::blocking(move || channel_yields(&*open_db(&app)?)).await
 }
 
 const NAME_STOPWORDS: [&str; 24] = [
@@ -478,8 +536,7 @@ pub(crate) async fn discover_by_maps(
         return Err("Scrivi cosa cercare o scegli sottocategoria e regione.".to_owned());
     }
     let _job = crate::lead_crawl::start_job()?;
-    let budget = (request.max_credits > 0).then_some(request.max_credits);
-    let context = crate::lead_crawl::open_context(&app, budget).await?;
+    let context = crate::lead_crawl::open_context(&app, request.max_credits).await?;
     let mut candidates = Vec::new();
     let mut errors = Vec::new();
     for query in &queries {
@@ -737,6 +794,58 @@ mod tests {
             )
             .unwrap();
         assert_eq!((kind.as_str(), seeds, credits), ("discovery", 4, 12));
+    }
+
+    #[test]
+    fn lead_candidates_channel_yield_counts_credits_and_new_addresses() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_schema(&db).unwrap();
+        let now = "2026-10-25T10:00:00Z";
+        insert_seeds_with_status(
+            &db,
+            CHANNEL_SEARCH,
+            &[SeedRow {
+                url: Some("https://proloco.example.test".to_owned()),
+                ..SeedRow::default()
+            }],
+            "pending",
+            now,
+        )
+        .unwrap();
+        db.execute("UPDATE search_seeds SET credits_used=4", [])
+            .unwrap();
+        record_discovery(
+            &db,
+            CHANNEL_SEARCH,
+            &DiscoveryReport {
+                accepted: 1,
+                credits: 2,
+                ..DiscoveryReport::default()
+            },
+            &[],
+        )
+        .unwrap();
+        let run: String = db
+            .query_row("SELECT id FROM search_runs", [], |row| row.get(0))
+            .unwrap();
+        for email in ["info@proloco.example.test", "noreply@proloco.example.test"] {
+            db.execute(
+                "INSERT INTO search_leads(id,run_id,email,email_comparison_key,retrieved_at,website)
+                 VALUES(?1,?2,?3,?3,?4,'https://proloco.example.test')",
+                params![email, run, email, now],
+            )
+            .unwrap();
+        }
+        assert_eq!(
+            channel_yields(&db).unwrap(),
+            [ChannelYield {
+                channel: CHANNEL_SEARCH.to_owned(),
+                discovery_credits: 2,
+                reading_credits: 4,
+                seeds: 1,
+                new_emails: 1,
+            }]
+        );
     }
 
     #[test]

@@ -10,7 +10,7 @@
 use crate::ai_typesafe::TypeSafeKeyView;
 use serde::Deserialize;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::Duration;
 
 pub(crate) const SETTINGS_KEY: &str = "contextdev_api_key";
@@ -122,11 +122,14 @@ fn api_error(status: u16, body: &str, retry_after: Option<u64>) -> ContextError 
     }
 }
 
-fn credits_consumed(body: &str) -> u64 {
-    serde_json::from_str::<serde_json::Value>(body)
-        .ok()
-        .and_then(|value| value.get("key_metadata")?.get("credits_consumed")?.as_u64())
-        .unwrap_or(0)
+/// `(credits_consumed, credits_remaining)` from a response's `key_metadata`.
+fn key_metadata(body: &str) -> (u64, Option<i64>) {
+    let value: serde_json::Value = serde_json::from_str(body).unwrap_or_default();
+    let metadata = &value["key_metadata"];
+    (
+        metadata["credits_consumed"].as_u64().unwrap_or(0),
+        metadata["credits_remaining"].as_i64(),
+    )
 }
 
 /// Every call counts against the plan and, on Free, a 400 can disable the key:
@@ -317,20 +320,20 @@ fn maps_search_url(query: &str) -> String {
     format!("https://www.google.com/maps/search/{}/", words.join("+"))
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, serde::Serialize)]
 pub(crate) struct Refill {
     pub(crate) at: String,
     pub(crate) credits: i64,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, serde::Serialize)]
 pub(crate) struct AutoTopup {
     pub(crate) enabled: bool,
     pub(crate) monthly_budget_credits: Option<i64>,
 }
 
 /// `GET /org/usage`, free of charge.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, serde::Serialize)]
 pub(crate) struct Usage {
     pub(crate) credits_remaining: i64,
     pub(crate) next_refill: Option<Refill>,
@@ -345,6 +348,32 @@ impl Usage {
         }
         Ok(())
     }
+
+    /// Credits one job may spend: what is left above the reserve, never more
+    /// than the per-run cap of the settings or of the request (0: none).
+    pub(crate) fn budget(
+        &self,
+        settings: &ContextDevSettings,
+        request_cap: u64,
+    ) -> Result<u64, String> {
+        self.spend_guard()?;
+        let available = self.credits_remaining - settings.reserve as i64;
+        if available <= 0 {
+            return Err(format!(
+                "Crediti context.dev insufficienti: {} rimasti, riserva {}.{}",
+                self.credits_remaining,
+                settings.reserve,
+                self.next_refill
+                    .as_ref()
+                    .map(|refill| format!(" Rinnovo il {}.", refill.at))
+                    .unwrap_or_default()
+            ));
+        }
+        Ok([settings.max_credits_per_run, request_cap]
+            .into_iter()
+            .filter(|cap| *cap > 0)
+            .fold(available as u64, u64::min))
+    }
 }
 
 pub(crate) struct ContextDev {
@@ -353,6 +382,8 @@ pub(crate) struct ContextDev {
     slots: tokio::sync::Semaphore,
     concurrency: usize,
     credits_used: AtomicU64,
+    /// Last balance seen in `key_metadata`; -1 before the first answer.
+    credits_remaining: AtomicI64,
     /// Credits this client may spend; `None` for no cap.
     budget: Option<u64>,
     halted: Mutex<Option<ContextError>>,
@@ -377,6 +408,7 @@ impl ContextDev {
             slots: tokio::sync::Semaphore::new(concurrency.max(1)),
             concurrency: concurrency.max(1),
             credits_used: AtomicU64::new(0),
+            credits_remaining: AtomicI64::new(-1),
             budget,
             halted: Mutex::new(None),
             bad_requests_in_a_row: AtomicU64::new(0),
@@ -391,6 +423,10 @@ impl ContextDev {
     /// Credits consumed by this client so far, failed calls included.
     pub(crate) fn credits_used(&self) -> u64 {
         self.credits_used.load(Ordering::Relaxed)
+    }
+
+    pub(crate) fn credits_remaining(&self) -> Option<i64> {
+        Some(self.credits_remaining.load(Ordering::Relaxed)).filter(|credits| *credits >= 0)
     }
 
     /// Why a call costing `cost` credits would not be sent.
@@ -451,8 +487,11 @@ impl ContextDev {
             .text()
             .await
             .map_err(|error| ContextError::Transient(error.to_string()))?;
-        self.credits_used
-            .fetch_add(credits_consumed(&body), Ordering::Relaxed);
+        let (consumed, remaining) = key_metadata(&body);
+        self.credits_used.fetch_add(consumed, Ordering::Relaxed);
+        if let Some(remaining) = remaining {
+            self.credits_remaining.store(remaining, Ordering::Relaxed);
+        }
         let result = if (200..300).contains(&status) {
             Ok(body)
         } else {
@@ -603,12 +642,24 @@ pub(crate) struct ContextDevSettings {
     /// Requests in flight the plan allows (Free 2, Developer 10, Pro 100).
     pub(crate) concurrency: usize,
     pub(crate) maps_enabled: bool,
+    /// Credits kept aside: a run refuses to start below it.
+    pub(crate) reserve: u64,
+    /// Credits a single run or discovery may spend; 0 for no cap.
+    pub(crate) max_credits_per_run: u64,
 }
 
-fn load_settings(db: &rusqlite::Connection) -> Result<ContextDevSettings, String> {
+fn number_setting(db: &rusqlite::Connection, key: &str, default: u64) -> Result<u64, String> {
+    Ok(crate::ai_registry::load_setting(db, key)?
+        .and_then(|value| value.trim().parse().ok())
+        .unwrap_or(default))
+}
+
+pub(crate) fn load_settings(db: &rusqlite::Connection) -> Result<ContextDevSettings, String> {
     Ok(ContextDevSettings {
         concurrency: concurrency(db)?,
         maps_enabled: maps_enabled(db)?,
+        reserve: number_setting(db, RESERVE_KEY, DEFAULT_RESERVE)?,
+        max_credits_per_run: number_setting(db, RUN_CAP_KEY, DEFAULT_MAX_CREDITS_PER_RUN)?,
     })
 }
 
@@ -633,9 +684,39 @@ pub(crate) async fn set_contextdev_settings(
             MAPS_KEY,
             if settings.maps_enabled { "1" } else { "0" },
         )?;
+        crate::ai_registry::save_setting(&db, RESERVE_KEY, &settings.reserve.to_string())?;
+        crate::ai_registry::save_setting(
+            &db,
+            RUN_CAP_KEY,
+            &settings.max_credits_per_run.to_string(),
+        )?;
         load_settings(&db)
     })
     .await
+}
+
+/// The balance as Settings shows it, with the reason runs would refuse to start.
+#[derive(Debug, serde::Serialize)]
+pub(crate) struct UsageView {
+    pub(crate) usage: Usage,
+    pub(crate) problem: Option<String>,
+}
+
+/// `GET /org/usage` (free): balance, next refill, Auto-Topup. Also checks the key.
+#[tauri::command]
+pub(crate) async fn get_contextdev_usage(app: tauri::AppHandle) -> Result<UsageView, String> {
+    let (key, settings) = crate::database::blocking(move || {
+        let db = crate::open_db(&app)?;
+        Ok((resolve_key(&db)?, load_settings(&db)?))
+    })
+    .await?;
+    let key = key.ok_or_else(|| "Chiave context.dev mancante".to_owned())?;
+    let usage = ContextDev::new(key, 1, None)?
+        .usage()
+        .await
+        .map_err(|error| error.to_string())?;
+    let problem = usage.budget(&settings, 0).err();
+    Ok(UsageView { usage, problem })
 }
 
 fn env_key() -> Option<String> {
@@ -647,6 +728,12 @@ fn env_key() -> Option<String> {
 
 const CONCURRENCY_KEY: &str = "contextdev_concurrency";
 const MAPS_KEY: &str = "contextdev_maps_enabled";
+const RESERVE_KEY: &str = "contextdev_reserve";
+const RUN_CAP_KEY: &str = "contextdev_max_credits_per_run";
+/// Credits never spent, so a mistake cannot empty the month.
+const DEFAULT_RESERVE: u64 = 100;
+/// A Free month is 1,000 credits: half of it per run at most.
+const DEFAULT_MAX_CREDITS_PER_RUN: u64 = 500;
 /// The Free plan's limit; Developer allows 10, Pro 100.
 const DEFAULT_CONCURRENCY: usize = 2;
 const MAX_CONCURRENCY: usize = 100;
@@ -806,10 +893,10 @@ mod tests {
     #[test]
     fn contextdev_counts_credits_and_parses_map_search_and_usage() {
         assert_eq!(
-            credits_consumed(r#"{"key_metadata":{"credits_consumed":2,"credits_remaining":5}}"#),
-            2
+            key_metadata(r#"{"key_metadata":{"credits_consumed":2,"credits_remaining":5}}"#),
+            (2, Some(5))
         );
-        assert_eq!(credits_consumed("not json"), 0);
+        assert_eq!(key_metadata("not json"), (0, None));
 
         let urls = mapped(
             r#"{"success":true,"domain":"a.example.test","request_id":"r","urls":[
@@ -846,6 +933,22 @@ mod tests {
             r#"{"enabled":false,"credits_used_this_period":0,"monthly_budget_credits":null}"#,
         );
         assert!(off.spend_guard().is_ok());
+        let settings = |reserve, max_credits_per_run| ContextDevSettings {
+            concurrency: 2,
+            maps_enabled: false,
+            reserve,
+            max_credits_per_run,
+        };
+        // 900 left, 100 kept aside: 800 at most, then the run and request caps.
+        assert_eq!(off.budget(&settings(100, 0), 0), Ok(800));
+        assert_eq!(off.budget(&settings(100, 500), 0), Ok(500));
+        assert_eq!(off.budget(&settings(100, 500), 40), Ok(40));
+        assert!(
+            off.budget(&settings(900, 500), 0)
+                .unwrap_err()
+                .contains("insufficienti")
+        );
+        assert!(unbounded.budget(&settings(0, 0), 0).is_err());
         assert_eq!(off.next_refill.unwrap().credits, 1000);
     }
 

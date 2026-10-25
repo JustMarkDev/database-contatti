@@ -194,7 +194,12 @@ function defaultInvoke(command: string) {
       from_env: true,
     });
   if (command === "get_contextdev_settings")
-    return Promise.resolve({ concurrency: 2, maps_enabled: false });
+    return Promise.resolve({
+      concurrency: 2,
+      maps_enabled: false,
+      reserve: 100,
+      max_credits_per_run: 500,
+    });
   if (command === "list_deterministic_catalogs") return Promise.resolve([]);
   if (command === "list_ai_run_failures") return Promise.resolve([]);
   if (command === "list_ai_runs") return Promise.resolve([]);
@@ -1230,6 +1235,29 @@ describe("App orchestration", () => {
     expect(screen.getByLabelText("Chiave API context.dev")).toHaveValue("");
   });
 
+  it("shows the context.dev balance and why runs would not start", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "get_contextdev_usage")
+        return Promise.resolve({
+          usage: {
+            credits_remaining: 900,
+            next_refill: null,
+            auto_topup: { enabled: true, monthly_budget_credits: null },
+          },
+          problem: "Auto-Topup di context.dev è attivo senza budget mensile",
+        });
+      return defaultInvoke(command);
+    });
+    render(<App />);
+    await screen.findByText("info@example.it");
+    await userEvent.click(screen.getByTitle("Impostazioni"));
+    expect(await screen.findByText("900 crediti rimasti")).toBeInTheDocument();
+    expect(screen.getByText("Auto-Topup senza budget")).toBeInTheDocument();
+    expect(
+      screen.getByText("Auto-Topup di context.dev è attivo senza budget mensile"),
+    ).toBeInTheDocument();
+  });
+
   it("turns Google Maps discovery on from Settings", async () => {
     invoke.mockImplementation((command: string, args?: { settings?: unknown }) => {
       if (command === "set_contextdev_settings") return Promise.resolve(args?.settings);
@@ -1244,7 +1272,7 @@ describe("App orchestration", () => {
     expect(maps).not.toBeChecked();
     await userEvent.click(maps);
     expect(invoke).toHaveBeenCalledWith("set_contextdev_settings", {
-      settings: { concurrency: 2, maps_enabled: true },
+      settings: { concurrency: 2, maps_enabled: true, reserve: 100, max_credits_per_run: 500 },
     });
     await waitFor(() => expect(maps).toBeChecked());
   });

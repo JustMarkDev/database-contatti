@@ -1,7 +1,10 @@
 import { invoke } from "@tauri-apps/api/core";
 import type {
+  ChannelYield,
   ContextDevSettings,
+  ContextDevUsage,
   DiscoveryReport,
+  ExploreEstimate,
   LeadFilterOptions,
   LeadFilters,
   LeadPlan,
@@ -39,6 +42,8 @@ export type ExploreRequest = {
   maxPages: number;
   maxPdfs: number;
   useAi: boolean;
+  /** context.dev credits the run may spend at most; the per-run cap of Settings when omitted. */
+  maxCredits?: number;
 };
 
 export type DirectoryRequest = {
@@ -82,6 +87,10 @@ export const importLeadSource = (sourceId: string) =>
 
 export const listSeedLists = () => invoke<SeedListView[]>("list_seed_lists");
 
+/** Sites the run would read and the credits it may spend, before starting it. */
+export const estimateExplore = (request: ExploreRequest) =>
+  invoke<ExploreEstimate>("estimate_explore", { request });
+
 export const exploreSeeds = (request: ExploreRequest) =>
   invoke<SearchRunSummary>("explore_seeds", { request });
 
@@ -114,6 +123,12 @@ export const discoverByMaps = (request: SearchDiscoveryRequest) =>
   invoke<DiscoveryReport>("discover_by_maps", { request });
 
 export const getContextdevSettings = () => invoke<ContextDevSettings>("get_contextdev_settings");
+
+/** Balance, refill and Auto-Topup (free call); also checks the key. */
+export const getContextdevUsage = () => invoke<ContextDevUsage>("get_contextdev_usage");
+
+/** Credits spent and new addresses found per discovery channel. */
+export const listChannelYields = () => invoke<ChannelYield[]>("list_channel_yields");
 
 export const setContextdevSettings = (settings: ContextDevSettings) =>
   invoke<ContextDevSettings>("set_contextdev_settings", { settings });

@@ -786,8 +786,6 @@ pub mod candidates;
 mod classification_benchmarks;
 mod classification_core;
 pub mod contacts;
-// shortcut: the client is unused until the crawler switches to it (plan phase 2), drop then.
-#[allow(dead_code)]
 mod contextdev;
 pub mod database;
 pub mod database_backup;
@@ -876,6 +874,9 @@ pub fn run() {
             lead_candidates::discover_by_search,
             lead_candidates::discover_by_maps,
             contextdev::get_contextdev_settings,
+            contextdev::get_contextdev_usage,
+            lead_crawl::estimate_explore,
+            lead_candidates::list_channel_yields,
             contextdev::set_contextdev_settings,
             contextdev::get_contextdev_api_key,
             contextdev::set_contextdev_api_key,

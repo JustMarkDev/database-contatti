@@ -3,6 +3,7 @@ import {
   cancelLeadCrawl,
   discoverByMaps,
   discoverBySearch,
+  estimateExplore,
   exploreDirectory,
   exploreSeeds,
   exportSearchLeadsTxt,
@@ -13,6 +14,7 @@ import {
   listLeadSources,
   listSearchLeads,
   planLeadRequest,
+  listChannelYields,
   listSearchRuns,
   listSeedLists,
   promoteSearchLeads,
@@ -37,6 +39,7 @@ import {
 } from "../components/ui/table";
 import { platform } from "../platform";
 import type {
+  ChannelYield,
   CrawlProgress,
   FieldFilter,
   LeadFilterOptions,
@@ -58,9 +61,9 @@ import type {
 
 const PAGE_SIZE = 100;
 /** Pages read per site, the home included: each one is a context.dev credit. */
-const PAGES_PER_SITE = 3;
-/** PDFs per school site (role circolari); 0 keeps every run at ≤4 credits a site. */
-const MAX_PDFS = 0;
+const PAGES_PER_SITE_OPTIONS = [1, 2, 3, 4, 5, 6];
+/** PDFs per school site (role circolari): each one is at least a credit. */
+const SCHOOL_PDF_OPTIONS = [0, 1, 2];
 const SITES_PER_RUN = 50;
 /** Organizations known only by name searched per click (one credit each). */
 const SITES_TO_FIND = 50;
@@ -286,6 +289,9 @@ export function SearchPage({
   const [sources, setSources] = useState<LeadSource[] | null>(null);
   const [seedLists, setSeedLists] = useState<SeedListView[]>([]);
   const [mapsEnabled, setMapsEnabled] = useState(false);
+  const [pagesPerSite, setPagesPerSite] = useState(3);
+  const [schoolPdfs, setSchoolPdfs] = useState(0);
+  const [yields, setYields] = useState<ChannelYield[]>([]);
 
   const [query, setQuery] = useState("");
   const [picked, setPicked] = useState<Set<string>>(() => new Set());
@@ -354,6 +360,9 @@ export function SearchPage({
       .catch(report);
     void getContextdevSettings()
       .then((value) => mounted.current && setMapsEnabled(value.maps_enabled))
+      .catch(report);
+    void listChannelYields()
+      .then((value) => mounted.current && setYields(value))
       .catch(report);
   }, [active, mode, refreshKey]);
 
@@ -510,8 +519,8 @@ export function SearchPage({
         subcategory: plan?.subcategory,
         regione: plan?.regione,
         limit: SITES_PER_RUN,
-        maxPages: PAGES_PER_SITE,
-        maxPdfs: MAX_PDFS,
+        maxPages: pagesPerSite,
+        maxPdfs: schoolPdfs,
         useAi: USE_AI,
       });
     } catch (error) {
@@ -528,6 +537,9 @@ export function SearchPage({
       key: string;
       title: string;
       meta: string;
+      /** The seed list it reads, for the estimate; directories add their own pages. */
+      list: string;
+      directory: boolean;
       run: () => Promise<RunTotals | null>;
     }[] = [];
     for (const source of catalog) {
@@ -538,6 +550,8 @@ export function SearchPage({
           key: source.id,
           title: source.name,
           meta: source.note,
+          list,
+          directory: true,
           run: async () => {
             const own = await exploreDirectory({ sourceId: source.id, useAi: USE_AI });
             return addTotals(own, await readList(list));
@@ -550,6 +564,8 @@ export function SearchPage({
           key: source.id,
           title: source.name,
           meta: source.note,
+          list,
+          directory: false,
           run: async () => {
             const own = await importLeadSource(source.id);
             return addTotals(own, await readList(list));
@@ -562,6 +578,8 @@ export function SearchPage({
       items.push({
         key: `list:${list.list_name}`,
         title: list.list_name,
+        list: list.list_name,
+        directory: false,
         meta:
           `${list.pending.toLocaleString("it-IT")} siti ancora da leggere` +
           (list.to_verify ? ` · ${list.to_verify.toLocaleString("it-IT")} da verificare` : ""),
@@ -569,7 +587,8 @@ export function SearchPage({
       });
     }
     return items;
-  }, [sources, seedLists]);
+    // readList reads the page settings when it runs.
+  }, [sources, seedLists, pagesPerSite, schoolPdfs]);
 
   /** Every open-data registry that publishes emails, one after the other. */
   function importAll() {
@@ -602,8 +621,35 @@ export function SearchPage({
     });
   }
 
-  function readPlaces() {
+  async function readPlaces() {
     const chosen = places.filter((place) => picked.has(place.key));
+    let sites = 0;
+    let credits = 0;
+    try {
+      for (const place of chosen) {
+        const estimate = await estimateExplore({
+          listName: place.list,
+          limit: SITES_PER_RUN,
+          maxPages: pagesPerSite,
+          maxPdfs: schoolPdfs,
+          useAi: USE_AI,
+        });
+        sites += estimate.sites;
+        credits += estimate.max_credits;
+      }
+    } catch (error) {
+      toast.error(String(error));
+      return;
+    }
+    const lists = chosen.some((place) => place.directory)
+      ? " Gli elenchi aggiungono le loro pagine (1 credito ciascuna)."
+      : "";
+    const confirmed = await confirmDialog({
+      title: "Leggere i siti scelti?",
+      description: `≈ ${sites.toLocaleString("it-IT")} siti, al massimo ≈ ${credits.toLocaleString("it-IT")} crediti context.dev (Map + ${pagesPerSite} pagine per sito). La ricerca si ferma al tetto di crediti delle Impostazioni.${lists}`,
+      actionLabel: "Leggi",
+    });
+    if (!confirmed) return;
     stopped.current = false;
     void perform("Lettura dei siti scelti", async () => {
       let totals: RunTotals = { lead_count: 0, page_count: 0 };
@@ -715,7 +761,7 @@ export function SearchPage({
             <strong>{busy}</strong>
             <span>
               {progress
-                ? `${progress.done} di ${progress.total} siti, ${progress.leads.toLocaleString("it-IT")} lead${progress.host ? ` · ${progress.host}` : ""}`
+                ? `${progress.done} di ${progress.total} siti, ${progress.leads.toLocaleString("it-IT")} lead, ${(progress.credits_used ?? 0).toLocaleString("it-IT")} crediti${progress.host ? ` · ${progress.host}` : ""}`
                 : "In corso…"}
             </span>
             {progress && (
@@ -857,8 +903,40 @@ export function SearchPage({
                   </SourceCard>
                 ))}
               </ul>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="flex flex-col gap-1 text-sm">
+                  Pagine per sito (1 credito ciascuna, più 1 per la mappa del sito)
+                  <select
+                    aria-label="Pagine per sito"
+                    value={pagesPerSite}
+                    onChange={(event) => setPagesPerSite(Number(event.currentTarget.value))}
+                    disabled={working}
+                  >
+                    {PAGES_PER_SITE_OPTIONS.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <label className="flex flex-col gap-1 text-sm">
+                  PDF per sito di scuola (circolari con i referenti)
+                  <select
+                    aria-label="PDF per sito di scuola"
+                    value={schoolPdfs}
+                    onChange={(event) => setSchoolPdfs(Number(event.currentTarget.value))}
+                    disabled={working}
+                  >
+                    {SCHOOL_PDF_OPTIONS.map((value) => (
+                      <option key={value} value={value}>
+                        {value}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+              </div>
               <Button
-                onClick={readPlaces}
+                onClick={() => void readPlaces()}
                 disabled={working || picked.size === 0}
                 className="justify-self-start"
               >
@@ -889,6 +967,51 @@ export function SearchPage({
                 </ul>
               )}
             </Panel>
+
+            {yields.length > 0 && (
+              <Panel
+                title="Resa delle fonti di siti nuovi"
+                description="Crediti spesi per trovare e leggere i siti di ogni fonte, e indirizzi nuovi trovati."
+              >
+                <Table aria-label="Resa per fonte">
+                  <TableHeader>
+                    <TableRow>
+                      <TableHead>fonte</TableHead>
+                      <TableHead>siti</TableHead>
+                      <TableHead>crediti</TableHead>
+                      <TableHead>email nuove</TableHead>
+                      <TableHead>crediti per email</TableHead>
+                    </TableRow>
+                  </TableHeader>
+                  <TableBody>
+                    {yields.map((row) => {
+                      const spent = row.discovery_credits + row.reading_credits;
+                      return (
+                        <TableRow key={row.channel}>
+                          <TableCell>{row.channel}</TableCell>
+                          <TableCell className="cell-num">
+                            {row.seeds.toLocaleString("it-IT")}
+                          </TableCell>
+                          <TableCell className="cell-num">
+                            {spent.toLocaleString("it-IT")}
+                          </TableCell>
+                          <TableCell className="cell-num">
+                            {row.new_emails.toLocaleString("it-IT")}
+                          </TableCell>
+                          <TableCell className="cell-num">
+                            {row.new_emails
+                              ? (spent / row.new_emails).toLocaleString("it-IT", {
+                                  maximumFractionDigits: 1,
+                                })
+                              : "—"}
+                          </TableCell>
+                        </TableRow>
+                      );
+                    })}
+                  </TableBody>
+                </Table>
+              </Panel>
+            )}
           </>
         )}
       </div>

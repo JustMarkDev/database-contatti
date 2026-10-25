@@ -53,19 +53,21 @@ pub(crate) fn start_job() -> Result<RunningGuard, String> {
     Ok(RunningGuard)
 }
 
-/// A context.dev client for one job. Refuses to start when the key is missing
-/// or Auto-Topup is on without a monthly budget (`GET /org/usage`, free).
+/// A context.dev client for one job, capped at what the balance allows above
+/// the reserve, the per-run cap of the settings and `request_cap` (0: none).
+/// Refuses to start when the key is missing, the balance is at the reserve or
+/// Auto-Topup is on without a monthly budget (`GET /org/usage`, free).
 pub(crate) async fn open_context(
     app: &tauri::AppHandle,
-    budget: Option<u64>,
+    request_cap: u64,
 ) -> Result<ContextDev, String> {
-    let (key, concurrency) = crate::database::blocking({
+    let (key, settings) = crate::database::blocking({
         let app = app.clone();
         move || {
             let db = open_db(&app)?;
             Ok((
                 crate::contextdev::resolve_key(&db)?,
-                crate::contextdev::concurrency(&db)?,
+                crate::contextdev::load_settings(&db)?,
             ))
         }
     })
@@ -73,13 +75,12 @@ pub(crate) async fn open_context(
     let key = key.ok_or_else(|| {
         "Imposta la chiave context.dev nelle Impostazioni per leggere i siti.".to_owned()
     })?;
-    let context = ContextDev::new(key, concurrency, budget)?;
-    context
+    let usage = ContextDev::new(key.clone(), 1, None)?
         .usage()
         .await
-        .map_err(|error| error.to_string())?
-        .spend_guard()?;
-    Ok(context)
+        .map_err(|error| error.to_string())?;
+    let budget = usage.budget(&settings, request_cap)?;
+    ContextDev::new(key, settings.concurrency, Some(budget))
 }
 
 /// One site to explore (or, without `url`, an organization still to be found).
@@ -414,6 +415,17 @@ fn mark_host(
     .map_err(|error| error.to_string())
 }
 
+/// Credits a host's reading cost, on the seeds of that host (any status).
+fn add_host_credits(db: &Connection, host: &str, credits: u64) -> Result<(), String> {
+    db.execute(
+        "UPDATE search_seeds SET credits_used=credits_used+?2
+         WHERE id=(SELECT id FROM search_seeds WHERE host=?1 ORDER BY created_at, rowid LIMIT 1)",
+        params![host, credits as i64],
+    )
+    .map(|_| ())
+    .map_err(|error| error.to_string())
+}
+
 /// Directory crawl: where its outbound sites go and what they inherit.
 #[derive(Debug, Clone)]
 pub(crate) struct DirectoryInfo {
@@ -430,6 +442,8 @@ pub(crate) struct CrawlJob {
     pub(crate) max_pdfs: i64,
     pub(crate) use_ai: bool,
     pub(crate) directory: Option<DirectoryInfo>,
+    /// Credits this run may spend at most (0: the settings' per-run cap).
+    pub(crate) max_credits: u64,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -441,6 +455,10 @@ struct CrawlProgress {
     leads: i64,
     host: String,
     finished: bool,
+    /// Credits this run has spent so far.
+    credits_used: u64,
+    /// Balance after the last call, when context.dev reported it.
+    credits_remaining: Option<i64>,
 }
 
 pub(crate) struct RunningGuard;
@@ -642,7 +660,7 @@ pub(crate) async fn crawl_urls(
     let label = job.label.clone();
     let (kind, source_id) = (job.kind, job.source_id.clone());
     let use_ai = job.use_ai;
-    let context = open_context(&app, None).await?;
+    let context = open_context(&app, job.max_credits).await?;
     let concurrency = context.concurrency();
 
     let (run_id, geography, taxonomy) = crate::database::blocking(move || {
@@ -748,6 +766,7 @@ pub(crate) async fn crawl_urls(
             (true, true) => None,
         };
         let first_error = crawl.errors.first().cloned();
+        let host_credits = crawl.credits;
         errors.extend(crawl.errors.into_iter().chain(host_errors));
         let (persist_app, persist_run, persist_now) = (app.clone(), run_id.clone(), now.clone());
         linked_sites.extend(outbound);
@@ -766,6 +785,7 @@ pub(crate) async fn crawl_urls(
                     &persist_now,
                 )?;
             }
+            add_host_credits(&db, &persist_host, host_credits)?;
             Ok(inserted)
         })
         .await?;
@@ -780,6 +800,8 @@ pub(crate) async fn crawl_urls(
                 leads: lead_total,
                 host,
                 finished: false,
+                credits_used: context.credits_used(),
+                credits_remaining: context.credits_remaining(),
             },
         );
     }
@@ -840,15 +862,16 @@ pub(crate) async fn crawl_urls(
         (Some(_), _) => "failed",
         (None, true) => "cancelled",
     };
+    let run_credits = context.credits_used();
     crate::database::blocking(move || {
-        finish_run(
-            &*open_db(&finish_app)?,
-            &finish_run_id,
-            status,
-            page_count,
-            pdf_found,
-            &errors,
+        let db = open_db(&finish_app)?;
+        finish_run(&db, &finish_run_id, status, page_count, pdf_found, &errors)?;
+        db.execute(
+            "UPDATE search_runs SET credits_used=?2 WHERE id=?1",
+            params![finish_run_id, run_credits as i64],
         )
+        .map(|_| ())
+        .map_err(|error| error.to_string())
     })
     .await?;
     let _ = app.emit(
@@ -861,6 +884,8 @@ pub(crate) async fn crawl_urls(
             leads: lead_total,
             host: String::new(),
             finished: true,
+            credits_used: context.credits_used(),
+            credits_remaining: context.credits_remaining(),
         },
     );
     if let Some(reason) = halted.filter(|reason| *reason != ContextError::BudgetReached) {
@@ -1028,6 +1053,8 @@ pub(crate) struct ExploreRequest {
     pub(crate) max_pages: i64,
     pub(crate) max_pdfs: i64,
     pub(crate) use_ai: bool,
+    /// Credits the run may spend at most (0: the settings' per-run cap).
+    pub(crate) max_credits: u64,
 }
 
 impl Default for ExploreRequest {
@@ -1041,8 +1068,71 @@ impl Default for ExploreRequest {
             max_pages: crate::discovery::DEFAULT_MAX_PAGES_PER_DOMAIN,
             max_pdfs: crate::discovery::DEFAULT_MAX_PDFS,
             use_ai: false,
+            max_credits: 0,
         }
     }
+}
+
+/// What reading the next pending sites would cost, shown before starting.
+#[derive(Debug, Serialize, PartialEq)]
+pub(crate) struct ExploreEstimate {
+    pub(crate) sites: usize,
+    /// Map 1 + pages per site, plus the PDFs of school sites.
+    pub(crate) max_credits: u64,
+}
+
+pub(crate) fn estimate_sites(seeds: &[SeedRow], max_pages: i64, max_pdfs: i64) -> ExploreEstimate {
+    let schools = seeds
+        .iter()
+        .filter(|seed| seed.context.category.as_deref() == Some("Istruzione"))
+        .count() as u64;
+    ExploreEstimate {
+        sites: seeds.len(),
+        max_credits: seeds.len() as u64 * (1 + max_pages.max(1) as u64)
+            + schools * max_pdfs.max(0) as u64,
+    }
+}
+
+fn explore_filter(
+    request: &ExploreRequest,
+) -> (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+) {
+    (
+        clean(request.list_name.clone()),
+        clean(request.category.clone()),
+        clean(request.subcategory.clone()),
+        clean(request.regione.clone()),
+    )
+}
+
+#[tauri::command]
+pub(crate) async fn estimate_explore(
+    app: tauri::AppHandle,
+    request: ExploreRequest,
+) -> Result<ExploreEstimate, String> {
+    let (list_name, category, subcategory, regione) = explore_filter(&request);
+    let limit = request.limit.clamp(1, MAX_EXPLORE_SITES);
+    let (max_pages, max_pdfs) =
+        crate::discovery::clamp_run_limits(Some(request.max_pages), Some(request.max_pdfs));
+    crate::database::blocking(move || {
+        let seeds = pending_seeds(
+            &*open_db(&app)?,
+            SeedFilter {
+                list_name: list_name.as_deref(),
+                category: category.as_deref(),
+                subcategory: subcategory.as_deref(),
+                regione: regione.as_deref(),
+            },
+            limit,
+            &chrono::Utc::now().to_rfc3339(),
+        )?;
+        Ok(estimate_sites(&seeds, max_pages, max_pdfs))
+    })
+    .await
 }
 
 /// Crawl the next pending sites of a list (or of every list).
@@ -1051,14 +1141,10 @@ pub(crate) async fn explore_seeds(
     app: tauri::AppHandle,
     request: ExploreRequest,
 ) -> Result<SearchRunSummary, String> {
-    let list_name = clean(request.list_name.clone());
+    let (list_name, pick_category, pick_subcategory, pick_regione) = explore_filter(&request);
     let limit = request.limit.clamp(1, MAX_EXPLORE_SITES);
     let pick_app = app.clone();
-    let (pick_list, pick_category) = (list_name.clone(), clean(request.category.clone()));
-    let (pick_subcategory, pick_regione) = (
-        clean(request.subcategory.clone()),
-        clean(request.regione.clone()),
-    );
+    let pick_list = list_name.clone();
     let seeds = crate::database::blocking(move || {
         pending_seeds(
             &*open_db(&pick_app)?,
@@ -1091,6 +1177,7 @@ pub(crate) async fn explore_seeds(
             max_pdfs,
             use_ai: request.use_ai,
             directory: None,
+            max_credits: request.max_credits,
         },
         seeds,
     )
@@ -1107,6 +1194,7 @@ pub(crate) struct DirectoryRequest {
     pub(crate) subcategory: Option<String>,
     pub(crate) max_pages: Option<usize>,
     pub(crate) use_ai: bool,
+    pub(crate) max_credits: u64,
 }
 
 /// Crawl a directory (catalog entry or pasted URL): its emails become leads
@@ -1159,6 +1247,7 @@ pub(crate) async fn explore_directory(
                 .clamp(1, MAX_DIRECTORY_PAGES) as i64,
             max_pdfs: 0,
             use_ai: request.use_ai,
+            max_credits: request.max_credits,
             directory: Some(DirectoryInfo {
                 list_name: format!("Elenco: {name}"),
                 category: category.clone(),
@@ -1218,7 +1307,7 @@ pub(crate) async fn find_seed_sites(
         return Err("Nessun ente senza sito in questo elenco".to_owned());
     }
     let _job = start_job()?;
-    let context = open_context(&app, None).await?;
+    let context = open_context(&app, 0).await?;
     let (found, errors) = crate::lead_candidates::find_sites(&app, &context, &pending).await?;
     let report = crate::lead_candidates::DiscoveryReport {
         found: found.len(),
@@ -1344,6 +1433,32 @@ mod tests {
     }
 
     #[test]
+    fn lead_crawl_estimate_counts_map_pages_and_school_pdfs() {
+        let seed = |category: &str| SeedRow {
+            url: Some("https://a.example.test".to_owned()),
+            context: LeadContext {
+                category: Some(category.to_owned()),
+                ..LeadContext::default()
+            },
+            ..SeedRow::default()
+        };
+        let seeds = [
+            seed("Istruzione"),
+            seed("Enti religiosi"),
+            seed("Associazioni"),
+        ];
+        // Map 1 + 3 pages each, plus 2 PDFs for the one school.
+        assert_eq!(
+            estimate_sites(&seeds, 3, 2),
+            ExploreEstimate {
+                sites: 3,
+                max_credits: 14
+            }
+        );
+        assert_eq!(estimate_sites(&[], 3, 0).max_credits, 0);
+    }
+
+    #[test]
     fn lead_crawl_pending_seeds_follow_the_request_filter() {
         let db = Connection::open_in_memory().unwrap();
         setup_schema(&db).unwrap();
@@ -1458,6 +1573,7 @@ mod tests {
             max_pdfs: 0,
             use_ai: false,
             directory: None,
+            max_credits: 0,
         };
         let (leads, outbound, errors) = host_leads(
             &crawl,

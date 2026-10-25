@@ -15,6 +15,7 @@ import { clearContacts, refreshDashboard } from "../api/contacts";
 import {
   getContextdevApiKey,
   getContextdevSettings,
+  getContextdevUsage,
   setContextdevApiKey,
   setContextdevSettings,
 } from "../api/search";
@@ -39,7 +40,13 @@ import {
 import { toast } from "../components/ui/toast";
 import { emptyFilters } from "../features/filters";
 import { platform } from "../platform";
-import type { ContextDevSettings, OpenCodeStatus, TypeSafeKeyView, TypeSafeStatus } from "../types";
+import type {
+  ContextDevSettings,
+  ContextDevUsage,
+  OpenCodeStatus,
+  TypeSafeKeyView,
+  TypeSafeStatus,
+} from "../types";
 
 /** context.dev plans by requests in flight; above the limit every call is refused. */
 const CONTEXTDEV_PLANS = [
@@ -164,6 +171,7 @@ function ProvidersCard({ active }: { active: boolean }) {
   const [key, setKey] = useState<TypeSafeKeyView | null>(null);
   const [contextdevKey, setContextdevKey] = useState<TypeSafeKeyView | null>(null);
   const [contextdev, setContextdev] = useState<ContextDevSettings | null>(null);
+  const [usage, setUsage] = useState<ContextDevUsage | null>(null);
   const [loading, setLoading] = useState(true);
   const [prefs, setPrefs] = useState<OpenCodePrefs>(loadOpenCodePrefs);
 
@@ -180,6 +188,7 @@ function ProvidersCard({ active }: { active: boolean }) {
       getTypesafeApiKey().then(setKey, () => setKey(null)),
       getContextdevApiKey().then(setContextdevKey, () => setContextdevKey(null)),
       getContextdevSettings().then(setContextdev, () => setContextdev(null)),
+      getContextdevUsage().then(setUsage, () => setUsage(null)),
     ]);
     setLoading(false);
   }, []);
@@ -203,6 +212,7 @@ function ProvidersCard({ active }: { active: boolean }) {
   async function saveContextdev(next: ContextDevSettings) {
     try {
       setContextdev(await setContextdevSettings(next));
+      setUsage(await getContextdevUsage().catch(() => null));
     } catch (error) {
       toast.error(String(error));
     }
@@ -211,6 +221,7 @@ function ProvidersCard({ active }: { active: boolean }) {
   async function saveContextdevKey(value: string) {
     try {
       setContextdevKey(await setContextdevApiKey(value));
+      setUsage(await getContextdevUsage().catch(() => null));
       toast.success(value ? "Chiave context.dev salvata." : "Chiave context.dev rimossa.");
       return true;
     } catch (error) {
@@ -346,12 +357,39 @@ function ProvidersCard({ active }: { active: boolean }) {
         </ProviderRow>
         <ProviderRow
           name="context.dev (ricerca web)"
+          error={usage?.problem}
           badges={[
             {
               label: contextdevKey?.configured ? "Chiave configurata" : "Chiave mancante",
               ok: Boolean(contextdevKey?.configured),
             },
             ...(contextdevKey?.from_env ? [{ label: "Da CONTEXT_DEV_API_KEY", ok: true }] : []),
+            ...(usage?.usage
+              ? [
+                  {
+                    label: `${usage.usage.credits_remaining.toLocaleString("it-IT")} crediti rimasti`,
+                    ok: !usage.problem,
+                  },
+                  ...(usage.usage.next_refill
+                    ? [
+                        {
+                          label: `Rinnovo ${new Date(usage.usage.next_refill.at).toLocaleDateString("it-IT")}: ${usage.usage.next_refill.credits.toLocaleString("it-IT")}`,
+                          ok: true,
+                        },
+                      ]
+                    : []),
+                  ...(usage.usage.auto_topup.enabled
+                    ? [
+                        {
+                          label: usage.usage.auto_topup.monthly_budget_credits
+                            ? `Auto-Topup fino a ${usage.usage.auto_topup.monthly_budget_credits.toLocaleString("it-IT")}`
+                            : "Auto-Topup senza budget",
+                          ok: Boolean(usage.usage.auto_topup.monthly_budget_credits),
+                        },
+                      ]
+                    : []),
+                ]
+              : []),
           ]}
         >
           <ApiKeyForm
@@ -394,6 +432,36 @@ function ProvidersCard({ active }: { active: boolean }) {
                   }
                 />
                 Cerca i siti anche su Google Maps (costo da misurare)
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                Riserva di crediti (mai spesi)
+                <Input
+                  key={`reserve-${contextdev.reserve}`}
+                  type="number"
+                  min={0}
+                  aria-label="Riserva di crediti context.dev"
+                  defaultValue={contextdev.reserve}
+                  onBlur={(event) => {
+                    const reserve = Math.max(0, Number(event.currentTarget.value) || 0);
+                    if (reserve !== contextdev.reserve)
+                      void saveContextdev({ ...contextdev, reserve });
+                  }}
+                />
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                Crediti al massimo per ricerca (0: nessun tetto)
+                <Input
+                  key={`cap-${contextdev.max_credits_per_run}`}
+                  type="number"
+                  min={0}
+                  aria-label="Crediti al massimo per ricerca"
+                  defaultValue={contextdev.max_credits_per_run}
+                  onBlur={(event) => {
+                    const cap = Math.max(0, Number(event.currentTarget.value) || 0);
+                    if (cap !== contextdev.max_credits_per_run)
+                      void saveContextdev({ ...contextdev, max_credits_per_run: cap });
+                  }}
+                />
               </label>
             </div>
           )}

@@ -211,6 +211,27 @@ export type ContextDevSettings = {
   /** Requests in flight the plan allows (Free 2, Developer 10, Pro 100). */
   concurrency: number;
   maps_enabled: boolean;
+  /** Credits kept aside: runs refuse to start below it. */
+  reserve: number;
+  /** Credits one run or discovery may spend; 0 for no cap. */
+  max_credits_per_run: number;
+};
+/** `GET /org/usage` with the reason runs would refuse to start. */
+export type ContextDevUsage = {
+  usage: {
+    credits_remaining: number;
+    next_refill: { at: string; credits: number } | null;
+    auto_topup: { enabled: boolean; monthly_budget_credits: number | null };
+  };
+  problem: string | null;
+};
+export type ExploreEstimate = { sites: number; max_credits: number };
+export type ChannelYield = {
+  channel: string;
+  discovery_credits: number;
+  reading_credits: number;
+  seeds: number;
+  new_emails: number;
 };
 export type DiscoveryReport = {
   found: number;
@@ -228,6 +249,9 @@ export type CrawlProgress = {
   leads: number;
   host: string;
   finished: boolean;
+  /** context.dev credits this run has spent so far. */
+  credits_used: number;
+  credits_remaining: number | null;
 };
 export type LeadPlan = {
   category: string | null;

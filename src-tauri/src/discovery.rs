@@ -768,6 +768,10 @@ pub(crate) struct HostCrawl {
     /// Nothing read because of context.dev (credits, capacity, key), not the
     /// site: the seed stays pending for the next run.
     pub(crate) retry_later: bool,
+    /// Calls sent for this host, one credit each by the price list.
+    // shortcut: retries and Maps surcharges are not counted per host (the run's
+    // total is exact); count `key_metadata` per call if per-seed figures matter.
+    pub(crate) credits: u64,
 }
 
 fn is_pagination(url: &str) -> bool {
@@ -911,6 +915,20 @@ impl CrawlSettings<'_> {
     }
 }
 
+/// Whether a call reached context.dev and was charged: refusals, credit, key
+/// and capacity errors cost nothing.
+fn sent<T>(result: &Result<T, crate::contextdev::ContextError>) -> bool {
+    use crate::contextdev::ContextError;
+    !matches!(
+        result,
+        Err(ContextError::BudgetReached
+            | ContextError::UsageExceeded
+            | ContextError::RateLimited(_)
+            | ContextError::Unauthorized(_)
+            | ContextError::BadRequest(_))
+    )
+}
+
 /// Record a failed page; a context.dev error (not the site's) that stops the
 /// client ends the host. Returns whether to go on.
 fn page_failed(
@@ -948,11 +966,12 @@ async fn map_site(
             )
         })
         .filter(|regex| regex.len() <= 256);
-    match settings
+    let result = settings
         .context
         .map(&state.host, regex.as_deref(), None)
-        .await
-    {
+        .await;
+    state.crawl.credits += u64::from(sent(&result));
+    match result {
         Ok(urls) => urls,
         Err(error) => {
             state
@@ -970,7 +989,9 @@ async fn read_page(settings: &CrawlSettings<'_>, state: &mut HostState, url: &st
         return None;
     }
     state.visited.insert(url.to_owned());
-    match settings.context.scrape_html(url).await {
+    let result = settings.context.scrape_html(url).await;
+    state.crawl.credits += u64::from(sent(&result));
+    match result {
         Ok(page) => {
             let pdfs = ingest_page(state, page.final_url, page.content, VIA);
             state.crawl.pdf_found += pdfs.len();
@@ -1003,7 +1024,9 @@ async fn read_role_pdfs(settings: &CrawlSettings<'_>, state: &mut HostState) {
         if !state.visited.insert(url.clone()) {
             continue;
         }
-        match settings.context.scrape_markdown(&url).await {
+        let result = settings.context.scrape_markdown(&url).await;
+        state.crawl.credits += u64::from(sent(&result));
+        match result {
             Ok(page) => {
                 state.pdf_count += 1;
                 ingest_page(state, url, page.content, VIA);
@@ -1066,7 +1089,9 @@ pub(crate) async fn crawl_host(
         state.crawl.retry_later = true;
         return state.crawl;
     }
-    let home = match settings.context.scrape_html(&seed).await {
+    let home = settings.context.scrape_html(&seed).await;
+    state.crawl.credits += u64::from(sent(&home));
+    let home = match home {
         Ok(page) => page,
         Err(error) => {
             state.crawl.errors.push(format!("{seed}: {error}"));
@@ -1214,6 +1239,7 @@ pub(crate) async fn start_search_run(
             max_pdfs,
             use_ai: use_ai.unwrap_or(false),
             directory: None,
+            max_credits: 0,
         },
         seeds
             .into_iter()

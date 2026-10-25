@@ -148,6 +148,18 @@ function defaultInvoke(command: string): Promise<unknown> {
       });
     case "find_seed_sites":
       return Promise.resolve(3);
+    case "estimate_explore":
+      return Promise.resolve({ sites: 3, max_credits: 12 });
+    case "list_channel_yields":
+      return Promise.resolve([
+        {
+          channel: "Scoperta: ricerca web",
+          discovery_credits: 2,
+          reading_credits: 8,
+          seeds: 2,
+          new_emails: 4,
+        },
+      ]);
     case "get_contextdev_settings":
       return Promise.resolve({ concurrency: 2, maps_enabled: false });
     case "discover_by_maps":
@@ -338,11 +350,43 @@ describe("SearchPage", () => {
     });
     expect(invoke).toHaveBeenCalledWith("import_lead_source", { sourceId: "wikidata-religiosi" });
     const base = { limit: 50, maxPages: 3, maxPdfs: 0, useAi: true };
+    expect(confirmDialog).toHaveBeenCalledWith(
+      expect.objectContaining({
+        description: expect.stringContaining("≈ 9 siti, al massimo ≈ 36 crediti"),
+      }),
+    );
+    expect(invoke).toHaveBeenCalledWith("estimate_explore", {
+      request: { ...base, listName: "Fonte: OSM" },
+    });
     expect(exploreCalls()).toEqual([
       { request: { ...base, listName: "Fonte: Wikidata diocesi" } },
       { request: { ...base, listName: "Elenco: CAI sezioni" } },
       { request: { ...base, listName: "Fonte: OSM" } },
     ]);
+  });
+
+  it("reads nothing when the estimate is declined, and uses the chosen pages per site", async () => {
+    await renderPage("Ricerca web");
+    await userEvent.selectOptions(screen.getByLabelText("Pagine per sito"), "5");
+    await userEvent.click(
+      within(screen.getByText("Fonte: OSM").closest("li")!).getByRole("checkbox"),
+    );
+    confirmDialog.mockResolvedValueOnce(false);
+    await userEvent.click(screen.getByRole("button", { name: "Leggi i siti scelti" }));
+    await waitFor(() => expect(confirmDialog).toHaveBeenCalled());
+    expect(invoke).toHaveBeenCalledWith("estimate_explore", {
+      request: expect.objectContaining({ listName: "Fonte: OSM", maxPages: 5 }),
+    });
+    expect(invoke).not.toHaveBeenCalledWith("explore_seeds", expect.anything());
+  });
+
+  it("shows the credits per new address of each discovery channel", async () => {
+    await renderPage("Ricerca web");
+    const table = await screen.findByRole("table", { name: "Resa per fonte" });
+    const cells = within(table)
+      .getAllByRole("cell")
+      .map((cell) => cell.textContent);
+    expect(cells).toEqual(["Scoperta: ricerca web", "2", "10", "4", "2,5"]);
   });
 
   it("keeps reading the other chosen sites when one of them fails", async () => {
@@ -383,10 +427,14 @@ describe("SearchPage", () => {
           leads: 7,
           host: "a.example.test",
           finished: false,
+          credits_used: 4,
+          credits_remaining: 900,
         },
       });
     });
-    expect(await screen.findByText("2 di 5 siti, 7 lead · a.example.test")).toBeInTheDocument();
+    expect(
+      await screen.findByText("2 di 5 siti, 7 lead, 4 crediti · a.example.test"),
+    ).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Ferma esplorazione" }));
     expect(invoke).toHaveBeenCalledWith("cancel_lead_crawl");
     await act(async () => {
