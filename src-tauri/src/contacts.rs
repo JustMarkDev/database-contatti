@@ -1651,22 +1651,6 @@ fn geographic_filter_aliases(column: &str, value: &str) -> Vec<String> {
                     .map(|s| s.to_string()),
             );
         }
-    } else if column == "comune" {
-        if norm_val.contains("abetone") || norm_val.contains("cutigliano") {
-            tokens.extend(
-                ["Abetone Cutigliano", "Abetone", "Cutigliano"]
-                    .iter()
-                    .map(|s| s.to_string()),
-            );
-        } else if norm_val == "belvi" {
-            tokens.extend(["Belvì", "Belvi", "Belvi'"].iter().map(|s| s.to_string()));
-        } else if norm_val == "andorno micca" || norm_val == "adorno micca" {
-            tokens.extend(
-                ["Andorno Micca", "Adorno Micca"]
-                    .iter()
-                    .map(|s| s.to_string()),
-            );
-        }
     }
 
     tokens
@@ -1754,7 +1738,6 @@ pub(crate) fn filter_where(filters: &ListFilters) -> (String, Vec<String>) {
         ("macroarea", &filters.macroarea),
         ("regione", &filters.regione),
         ("provincia", &filters.provincia),
-        ("comune", &filters.comune),
         ("classification_method", &filters.classification_method),
         (
             "classification_confidence",
@@ -1763,7 +1746,7 @@ pub(crate) fn filter_where(filters: &ListFilters) -> (String, Vec<String>) {
     ] {
         let is_multi_value = matches!(
             column,
-            "category" | "subcategory" | "regione" | "provincia" | "comune" | "macroarea"
+            "category" | "subcategory" | "regione" | "provincia" | "macroarea"
         );
         if column == "source_file" {
             if !filter.include.is_empty() {
@@ -1891,7 +1874,7 @@ pub(crate) fn filter_where(filters: &ListFilters) -> (String, Vec<String>) {
     )
 }
 
-const FACET_COLUMNS: [&str; 11] = [
+const FACET_COLUMNS: [&str; 10] = [
     "source_file",
     "category",
     "subcategory",
@@ -1900,7 +1883,6 @@ const FACET_COLUMNS: [&str; 11] = [
     "macroarea",
     "regione",
     "provincia",
-    "comune",
     "classification_method",
     "classification_confidence",
 ];
@@ -1913,7 +1895,7 @@ pub(crate) fn facet_options(db: &Connection) -> Result<crate::FilterOptions, Str
     let mut statement = db
         .prepare(
             "SELECT source_file,category,subcategory,contact_kind,paese,macroarea,regione,
-                    provincia,comune,classification_method,
+                    provincia,classification_method,
                     CAST(classification_confidence AS TEXT),is_pec
              FROM contacts WHERE is_exportable=1",
         )
@@ -1937,7 +1919,7 @@ pub(crate) fn facet_options(db: &Connection) -> Result<crate::FilterOptions, Str
                 }
             }
         }
-        let is_pec: i64 = row.get(11).map_err(|error| error.to_string())?;
+        let is_pec: i64 = row.get(10).map_err(|error| error.to_string())?;
         pec[usize::from(is_pec == 0)] += 1;
     }
     let mut raw = raw.into_iter();
@@ -1951,7 +1933,6 @@ pub(crate) fn facet_options(db: &Connection) -> Result<crate::FilterOptions, Str
         macroarea: next("macroarea"),
         regione: next("regione"),
         provincia: next("provincia"),
-        comune: next("comune"),
         classification_method: next("classification_method"),
         classification_confidence: next("classification_confidence"),
         pec: [("pec", pec[0]), ("standard", pec[1])]
@@ -1978,10 +1959,9 @@ fn facet_from_raw(column: &str, raw: HashMap<String, usize>) -> Vec<FilterOption
                     }
                 }
             }
-            "regione" | "provincia" | "comune" | "macroarea" => {
+            "regione" | "provincia" | "macroarea" => {
                 for value in split_merged_values(&raw_value) {
                     let sanitized = match column {
-                        "comune" => crate::ai_enrichment::normalize_extracted_comune(&value),
                         "regione" => crate::ai_enrichment::normalize_extracted_regione(&value),
                         "macroarea" => crate::ai_enrichment::normalize_extracted_macroarea(&value),
                         _ => {
@@ -2020,7 +2000,6 @@ pub(crate) fn facet_values(db: &Connection, column: &str) -> Result<Vec<FilterOp
         "macroarea" => options.macroarea,
         "regione" => options.regione,
         "provincia" => options.provincia,
-        "comune" => options.comune,
         "pec" => options.pec,
         "classification_method" => options.classification_method,
         "classification_confidence" => options.classification_confidence,

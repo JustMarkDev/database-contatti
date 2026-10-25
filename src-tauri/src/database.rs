@@ -120,7 +120,6 @@ fn initialize_runtime(
     let legacy_blacklist_path = dir.join("blacklist.sqlite3");
     consolidate_legacy_blacklist(&mut primary, &legacy_blacklist_path, false)?;
     normalize_orphaned_ai_runs(&primary, chrono::Utc::now().timestamp())?;
-    crate::mailbox_verification::normalize_jobs_on_startup(&primary)?;
     // Freshness moves with time: rescore once a day. A failure must not block startup.
     match crate::schema::refresh_scores_if_due(&primary, chrono::Utc::now().timestamp()) {
         Ok(Some(changed)) => println!("[db] Punteggi contatti aggiornati: {changed}"),

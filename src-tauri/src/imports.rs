@@ -1169,7 +1169,7 @@ pub(crate) async fn import_contact_files_inner(
         }
         if unresolved > 0 {
             file_warnings.push(format!(
-                "{unresolved} email con dominio non verificabile (DNS): conservate nei candidati; «Rivalida solo DNS» in Verifica caselle le recupera quando il dominio risponde."
+                "{unresolved} email con dominio non verificabile (DNS): non importate come contatti."
             ));
         }
         reports.push(FileReport {
@@ -1891,7 +1891,6 @@ pub(crate) async fn clear_database(app: tauri::AppHandle) -> Result<usize, Strin
 
 pub(crate) fn clear_database_inner(app: &tauri::AppHandle) -> Result<usize, String> {
     let mut db = open_db(app)?;
-    crate::mailbox_verification::cancel_jobs_for_database_clear(&db)?;
     clear_database_connection(&mut db)
 }
 
@@ -1912,12 +1911,7 @@ pub(crate) fn clear_database_connection(db: &mut Connection) -> Result<usize, St
             })
             .unwrap_or(0);
         tx.execute_batch(
-            "DELETE FROM mailbox_verification_attempts;
-             DELETE FROM mailbox_verification_tasks;
-             DELETE FROM mailbox_verification_jobs;
-             DELETE FROM mailbox_verification_target_state;
-             UPDATE mailbox_verification_control SET action='cancelled',updated_at=CURRENT_TIMESTAMP WHERE id=1;
-             DELETE FROM quality_score_components;
+            "DELETE FROM quality_score_components;
              DELETE FROM quality_score_snapshots;
              DELETE FROM candidate_dispositions;
              DELETE FROM classification_claims;

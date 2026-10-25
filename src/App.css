@@ -404,8 +404,7 @@
   .ai-panel,
   .blacklist-panel,
   .settings-panel,
-  .ai-log-panel,
-  .verification-panel {
+  .ai-log-panel {
     margin-bottom: var(--space-4);
   }
   /* Island section flattening lives outside @layer components, after this block,
@@ -506,9 +505,7 @@
      Numbers sit in one bordered strip; 1px gaps over a border-coloured
      background draw the dividers, so wrapped rows keep clean hairlines. */
   .stat-strip,
-  .ai-run-metrics,
-  .verification-outcome-grid,
-  .verification-history-grid {
+  .ai-run-metrics {
     display: grid;
     gap: 1px;
     margin: 0;
@@ -826,30 +823,24 @@
   .table-toolbar .actions-row {
     align-items: center;
   }
-  .blacklist-panel .table-toolbar,
-  .verification-panel .table-toolbar {
+  .blacklist-panel .table-toolbar {
     padding: 4px 0 0;
   }
-  .blacklist-panel .contacts-table-wrap,
-  .verification-panel .contacts-table-wrap {
+  .blacklist-panel .contacts-table-wrap {
     max-height: min(52vh, 520px);
     border: 1px solid var(--border-soft);
     border-radius: 10px;
     background: var(--field);
   }
   .blacklist-panel .contacts-table th,
-  .verification-panel .contacts-table th,
   .blacklist-panel .contacts-table .col-actions {
     background: var(--field);
   }
   .blacklist-panel .contacts-table th:first-child,
-  .blacklist-panel .contacts-table td:first-child,
-  .verification-panel .contacts-table th:first-child,
-  .verification-panel .contacts-table td:first-child {
+  .blacklist-panel .contacts-table td:first-child {
     padding-left: 14px;
   }
-  .blacklist-panel .contacts-table tbody tr:last-child td,
-  .verification-panel .contacts-table tbody tr:last-child td {
+  .blacklist-panel .contacts-table tbody tr:last-child td {
     border-bottom: 0;
   }
   .inline-form {
@@ -933,8 +924,6 @@
 
   /* ------------------------------------------------------------- callouts */
   .callout,
-  .verification-tls-note,
-  .verification-warning,
   .danger-warning {
     display: grid;
     gap: 4px;
@@ -946,8 +935,7 @@
     font-size: 0.8125rem;
     line-height: 1.5;
   }
-  .callout strong,
-  .verification-tls-note strong {
+  .callout strong {
     color: var(--text);
     font-weight: 600;
   }
@@ -955,19 +943,10 @@
     border-color: rgb(127 212 175 / 0.25);
     background: rgb(127 212 175 / 0.05);
   }
-  .verification-tls-note {
-    border-color: rgb(240 184 71 / 0.25);
-    background: rgb(240 184 71 / 0.05);
-  }
-  .verification-tls-note strong {
-    color: var(--warning);
-  }
-  .verification-warning,
   .danger-warning {
     border-color: rgb(255 107 112 / 0.3);
     background: rgb(255 107 112 / 0.06);
   }
-  .verification-warning strong,
   .danger-warning {
     color: var(--danger);
   }
@@ -978,69 +957,6 @@
   }
   .danger-warning strong {
     font-weight: 500;
-  }
-
-  /* ---------------------------------------------------------- verification */
-  .verification-settings-grid {
-    display: grid;
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    gap: 14px;
-  }
-  .verification-inline-note {
-    color: var(--faint);
-    font-size: 0.75rem;
-    line-height: 1.45;
-  }
-  .verification-panel .verification-tls-note {
-    margin: 14px 0;
-  }
-  .verification-warning {
-    margin-bottom: 14px;
-  }
-  .verification-start-actions {
-    margin-bottom: 10px;
-  }
-  .verification-progress-heading {
-    display: flex;
-    justify-content: space-between;
-    gap: 10px;
-    margin-bottom: 10px;
-    color: var(--muted);
-    font-size: 0.8125rem;
-    font-variant-numeric: tabular-nums;
-  }
-  .verification-progress-heading strong {
-    color: var(--text);
-    font-size: 1rem;
-    font-weight: 600;
-  }
-  .verification-outcome-grid,
-  .verification-history-grid {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
-    color: var(--muted);
-    font-size: 0.8125rem;
-  }
-  .verification-outcome-grid {
-    margin: 16px 0;
-  }
-  .verification-outcome-grid span,
-  .verification-history-grid span {
-    display: flex;
-    justify-content: space-between;
-    gap: 10px;
-    padding: 10px 14px;
-    background: var(--panel);
-  }
-  .verification-outcome-grid strong,
-  .verification-history-grid strong {
-    color: var(--text);
-    font-weight: 600;
-    font-variant-numeric: tabular-nums;
-  }
-  .verification-error {
-    margin: 12px 0 0;
-    color: var(--danger);
-    font-size: 0.8125rem;
   }
 
   /* ------------------------------------------------------------------- AI */
@@ -1455,10 +1371,7 @@
     .stat-strip,
     .ai-run-metrics,
     .inline-form,
-    .blacklist-toolbar,
-    .verification-settings-grid,
-    .verification-outcome-grid,
-    .verification-history-grid {
+    .blacklist-toolbar {
       grid-template-columns: 1fr;
     }
   }
@@ -1485,8 +1398,7 @@
 .content-island > .ai-panel,
 .content-island > .blacklist-panel,
 .content-island > .settings-panel,
-.content-island > .ai-log-panel,
-.content-island > .verification-panel {
+.content-island > .ai-log-panel {
   margin-bottom: 0;
   border: 0;
   border-radius: 0;
@@ -1501,12 +1413,10 @@
 .content-island > .blacklist-panel > [data-slot="card-header"],
 .content-island > .settings-panel > [data-slot="card-header"],
 .content-island > .ai-log-panel > [data-slot="card-header"],
-.content-island > .verification-panel > [data-slot="card-header"],
 .content-island > .ai-panel > [data-slot="card-content"],
 .content-island > .blacklist-panel > [data-slot="card-content"],
 .content-island > .settings-panel > [data-slot="card-content"],
-.content-island > .ai-log-panel > [data-slot="card-content"],
-.content-island > .verification-panel > [data-slot="card-content"] {
+.content-island > .ai-log-panel > [data-slot="card-content"] {
   padding-left: 0;
   padding-right: 0;
 }

@@ -83,6 +83,9 @@ const MIGRATION_NAMES: [&str; LATEST_SCHEMA_VERSION as usize] = [
     "contact-score-richness",
     "promoted-contact-status",
     "contextdev-credits",
+    "apt-subcategory-label",
+    "retire-personal-and-sensitive-subcategories",
+    "remove-sanita-contacts-keep-caritas",
 ];
 
 pub(crate) fn run_ordered_migrations(db: &Connection, fail_at: Option<i64>) -> Result<(), String> {
@@ -246,6 +249,9 @@ fn apply_migration(db: &Connection, version: i64) -> Result<(), String> {
         64 => migrate_contact_score_richness(db),
         65 => migrate_promoted_contact_status(db),
         66 => migrate_contextdev_credits(db),
+        67 => migrate_canonical_subcategory_labels(db),
+        68 => migrate_retire_personal_and_sensitive_subcategories(db),
+        69 => migrate_remove_sanita_contacts(db),
         _ => Err(format!("unknown migration {version}")),
     }
 }
@@ -275,7 +281,7 @@ pub(crate) fn setup_schema(db: &Connection) -> Result<(), String> {
     run_ordered_migrations(db, None)
 }
 
-pub(crate) const LATEST_SCHEMA_VERSION: i64 = 66;
+pub(crate) const LATEST_SCHEMA_VERSION: i64 = 69;
 
 pub(crate) const ACTIVE_TAXONOMY_VERSION: &str = "taxonomy-v1";
 

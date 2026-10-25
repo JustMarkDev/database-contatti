@@ -425,6 +425,85 @@ pub(crate) fn migrate_canonical_subcategory_labels(db: &Connection) -> Result<()
     Ok(())
 }
 
+/// Migration 68: "Contatto personale" is retired in favour of "Ente non
+/// determinato" (the alias repair re-points contacts, claims and cases), and
+/// the contacts, candidates and seeds of clinics/IRCCS, forze dell'ordine and tribunals are
+/// deleted. Those three subcategories stay in the taxonomy.
+pub(crate) fn migrate_retire_personal_and_sensitive_subcategories(
+    db: &Connection,
+) -> Result<(), String> {
+    migrate_canonical_subcategory_labels(db)?;
+    db.execute(
+        "DELETE FROM taxonomy_entries
+         WHERE level='subcategory' AND display_name='Contatto personale'",
+        [],
+    )
+    .map_err(|error| error.to_string())?;
+    const REMOVED: &str = "('clinica / irccs / struttura sanitaria','forze dell''ordine','tribunale / ufficio giudiziario')";
+    let in_removed = format!("lower(trim(coalesce(subcategory,''))) IN {REMOVED}");
+    for sql in [
+        // Candidates first: contacts.id is only SET NULL on them.
+        format!(
+            "DELETE FROM email_candidates WHERE {in_removed}
+             OR contact_id IN (SELECT id FROM contacts WHERE {in_removed})"
+        ),
+        format!("DELETE FROM contacts WHERE {in_removed}"),
+        format!("DELETE FROM search_seeds WHERE {in_removed}"),
+    ] {
+        db.execute(&sql, []).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
+/// Migration 69: deletes the contacts, candidates and seeds of the whole Sanità
+/// category (the taxonomy stays). Caritas and charities that were filed under
+/// it are enti religiosi, so they move to "Caritas / ente caritativo religioso"
+/// first.
+pub(crate) fn migrate_remove_sanita_contacts(db: &Connection) -> Result<(), String> {
+    let in_sanita = "(lower(trim(coalesce(category,''))) IN ('sanità','sanita')
+         OR lower(trim(coalesce(subcategory,''))) IN (
+            'ospedale / azienda ospedaliera','asl / asst / distretto sanitario',
+            'clinica / irccs / struttura sanitaria','altro ente sanitario'))";
+    let (category_id, subcategory_id): (i64, i64) = db
+        .query_row(
+            "SELECT c.id,s.id FROM categories c JOIN subcategories s ON s.category_id=c.id
+             WHERE c.name='Enti religiosi' AND s.name='Caritas / ente caritativo religioso'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .map_err(|error| error.to_string())?;
+    let is_charity = "lower(coalesce(email,'')||' '||coalesce(organization_name,'')||' '||coalesce(denomination,'')||' '||coalesce(source_file,''))";
+    db.execute(
+        &format!(
+            "UPDATE contacts
+             SET category='Enti religiosi',subcategory='Caritas / ente caritativo religioso',
+                 category_id=?1,subcategory_id=?2
+             WHERE {in_sanita} AND ({is_charity} LIKE '%caritas%' OR {is_charity} LIKE '%caritativ%')"
+        ),
+        params![category_id, subcategory_id],
+    )
+    .map_err(|error| error.to_string())?;
+    db.execute(
+        "UPDATE email_candidates
+         SET category='Enti religiosi',subcategory='Caritas / ente caritativo religioso'
+         WHERE contact_id IN (SELECT id FROM contacts
+                              WHERE subcategory='Caritas / ente caritativo religioso')",
+        [],
+    )
+    .map_err(|error| error.to_string())?;
+    for sql in [
+        format!(
+            "DELETE FROM email_candidates WHERE {in_sanita}
+             OR contact_id IN (SELECT id FROM contacts WHERE {in_sanita})"
+        ),
+        format!("DELETE FROM contacts WHERE {in_sanita}"),
+        format!("DELETE FROM search_seeds WHERE {in_sanita}"),
+    ] {
+        db.execute(&sql, []).map_err(|error| error.to_string())?;
+    }
+    Ok(())
+}
+
 pub(crate) fn migrate_classification_subcategory_fallbacks(db: &Connection) -> Result<(), String> {
     db.execute_batch(
         "CREATE TABLE IF NOT EXISTS classification_system_changes (
@@ -737,7 +816,7 @@ pub const TAXONOMY: &[(&str, &[&str])] = &[
         "Turismo e promozione territoriale",
         &[
             "Pro Loco",
-            "APT",
+            "Azienda di Promozione Turistica",
             "Ufficio turistico",
             "Consorzio turistico",
             "Organizzatore di eventi e sagre",
@@ -746,11 +825,7 @@ pub const TAXONOMY: &[(&str, &[&str])] = &[
     ),
     (
         "Varie",
-        &[
-            "Contatto personale",
-            "Ente non determinato",
-            "Dato misto o da revisionare",
-        ],
+        &["Ente non determinato", "Dato misto o da revisionare"],
     ),
 ];
 

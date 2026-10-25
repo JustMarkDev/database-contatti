@@ -100,7 +100,6 @@ struct ListFilters {
     contact_kind: FieldFilter,
     paese: FieldFilter,
     macroarea: FieldFilter,
-    comune: FieldFilter,
     provincia: FieldFilter,
     regione: FieldFilter,
     pec: FieldFilter,
@@ -657,7 +656,6 @@ struct FilterOptions {
     macroarea: Vec<FilterOption>,
     regione: Vec<FilterOption>,
     provincia: Vec<FilterOption>,
-    comune: Vec<FilterOption>,
     pec: Vec<FilterOption>,
     classification_method: Vec<FilterOption>,
     classification_confidence: Vec<FilterOption>,
@@ -797,7 +795,6 @@ mod lead_ai;
 mod lead_candidates;
 mod lead_crawl;
 mod lead_directories;
-pub mod mailbox_verification;
 mod mcp;
 pub mod parsing;
 pub mod schema;
@@ -926,12 +923,6 @@ pub fn run() {
             blacklist::remove_blacklist_entry,
             blacklist::clear_blacklist,
             blacklist::get_blacklist_stats,
-            mailbox_verification::get_mailbox_verification_overview,
-            mailbox_verification::save_mailbox_verification_settings,
-            mailbox_verification::start_mailbox_verification,
-            mailbox_verification::control_mailbox_verification,
-            mailbox_verification::get_mailbox_verification_status,
-            mailbox_verification::revalidate_mailbox_dns,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
@@ -947,9 +938,6 @@ pub fn run() {
                     Err(error) => eprintln!(
                         "[ai] Impossibile mettere in pausa la classificazione alla chiusura: {error}"
                     ),
-                }
-                if let Ok(db) = open_db(app) {
-                    let _ = mailbox_verification::pause_running_jobs(&db);
                 }
             }
         });

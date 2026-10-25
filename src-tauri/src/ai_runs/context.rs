@@ -496,6 +496,9 @@ pub struct GeographicPlaceClaim {
 #[derive(Debug, Clone, serde::Deserialize, serde::Serialize)]
 pub struct GeographicResult {
     pub outcome: String,
+    /// "Italia" | "Svizzera" when Jev is confident the stored country is wrong or confirms it.
+    #[serde(default)]
+    pub country: Option<String>,
     #[serde(default)]
     pub claims: Vec<GeographicPlaceClaim>,
     #[serde(default)]

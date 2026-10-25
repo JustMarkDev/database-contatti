@@ -46,11 +46,6 @@ function workInProgress(title: string) {
   };
 }
 
-const MailboxVerificationPage = import.meta.env.DEV
-  ? lazy(async () => ({
-      default: (await import("./pages/MailboxVerificationPage")).MailboxVerificationPage,
-    }))
-  : workInProgress("Verifica caselle");
 const AiPage = lazy(async () => ({
   default: (await import("./pages/AiPage")).AiPage,
 }));
@@ -234,20 +229,6 @@ export default function App() {
                 </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton
-                    isActive={activePage === "verification"}
-                    onClick={() => activatePage("verification")}
-                    title="Verifica caselle"
-                    tooltip="Verifica caselle"
-                    aria-current={activePage === "verification" ? "page" : undefined}
-                  >
-                    <Icon name="verification" />
-                    <span className="sidebar-copy group-data-[collapsible=icon]:hidden">
-                      Verifica caselle
-                    </span>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-                <SidebarMenuItem>
-                  <SidebarMenuButton
                     isActive={activePage === "ai"}
                     onClick={() => activatePage("ai")}
                     title="Classificazione IA"
@@ -326,20 +307,6 @@ export default function App() {
               onSummary={updateSummary}
               onExport={updateExport}
             />
-            {loadedPages.has("verification") && (
-              <Suspense
-                fallback={
-                  activePage === "verification" ? (
-                    <PageLoading name="della verifica caselle" />
-                  ) : null
-                }
-              >
-                <MailboxVerificationPage
-                  active={activePage === "verification"}
-                  onContactsChanged={reloadContacts}
-                />
-              </Suspense>
-            )}
             {loadedPages.has("ai") && (
               <Suspense
                 fallback={

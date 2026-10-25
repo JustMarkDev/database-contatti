@@ -277,7 +277,6 @@ export type Filters = {
   macroarea: FieldFilter;
   regione: FieldFilter;
   provincia: FieldFilter;
-  comune: FieldFilter;
   pec: FieldFilter;
   classification_method: FieldFilter;
   classification_confidence: FieldFilter;
@@ -296,7 +295,6 @@ export type FilterOptions = {
   macroarea: FilterOption[];
   regione: FilterOption[];
   provincia: FilterOption[];
-  comune: FilterOption[];
   pec: FilterOption[];
   classification_method: FilterOption[];
   classification_confidence: FilterOption[];
@@ -603,73 +601,4 @@ export type ReviewList = {
   reviews: Review[];
   total: number;
 };
-export type Page = "contacts" | "verification" | "ai" | "blacklist" | "search" | "settings";
-
-export type MailboxVerificationMode = "recommended" | "everything";
-export type MailboxVerificationAction = "pause" | "resume" | "cancel";
-
-export type MailboxVerificationSettings = {
-  ehlo_hostname: string;
-  envelope_sender: string;
-  require_starttls: boolean;
-  starttls_required?: boolean;
-  global_rate_per_minute?: number;
-  max_concurrency?: number;
-};
-
-export type MailboxDnsRevalidationReport = {
-  domains_examined: number;
-  domains_revalidated: number;
-  routing_ok: number;
-  no_routing: number;
-  temporary_failures: number;
-  promoted_contacts: number;
-  separated_contacts: number;
-};
-
-export type MailboxVerificationStatus = {
-  id: string | null;
-  mode: MailboxVerificationMode | null;
-  state:
-    | "idle"
-    | "preparing"
-    | "running"
-    | "pausing"
-    | "paused"
-    | "completed"
-    | "cancelled"
-    | "failed";
-  phase: string;
-  processed: number;
-  total: number;
-  accepted: number;
-  rejected: number;
-  temporary: number;
-  catch_all: number;
-  policy_blocked: number;
-  unknown: number;
-  dns_revalidated: number;
-  started_at: string | null;
-  updated_at: string | null;
-  eta_seconds: number | null;
-  message: string | null;
-  error: string | null;
-};
-
-export type MailboxVerificationOverview = {
-  eligible_addresses: number;
-  eligible_domains: number;
-  eligible_mx_groups: number;
-  excluded_blacklisted: number;
-  excluded_suppressed: number;
-  excluded_non_contact: number;
-  excluded_no_routing: number;
-  temporary_dns_failures: number;
-  preflight_ok: boolean;
-  preflight_message: string | null;
-  settings: MailboxVerificationSettings | null;
-  status: MailboxVerificationStatus | null;
-  last_completed_at: string | null;
-};
-
-export type MailboxVerificationProgress = MailboxVerificationStatus;
+export type Page = "contacts" | "ai" | "blacklist" | "search" | "settings";

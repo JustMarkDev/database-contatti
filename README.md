@@ -13,8 +13,6 @@ i dati applicativi sono conservati in SQLite.
   candidati separati e motivi di quarantena/soppressione;
 - filtri inclusivi/esclusivi, ricerca e paginazione a blocchi di 100 righe;
 - blacklist persistente, applicata anche ai contatti già presenti;
-- verifica caselle opzionale con rivalidazione DNS, coda SMTP durevole e
-  STARTTLS obbligatorio, senza inviare messaggi;
 - arricchimento con passo deterministico, poi Cascade Jev (TypeSafe) e
   escalation OpenCode Muse Spark 1.3 solo sui gap di tassonomia; apply automatico
   di etichette e geografia, revisione manuale solo per i gap, con pausa/ripresa;
@@ -37,10 +35,7 @@ aprire URL. La classificazione dei siti nuovi invia titolo, descrizione e
 indirizzo del sito a TypeSafe Jev. I domini dei contatti diventano siti da
 leggere solo quando lo chiedi con **Aggiungi dai contatti**.
 La validazione dei domini esegue invece richieste DNS, che possono essere
-visibili al resolver DNS configurato sul sistema. La verifica caselle, soltanto
-quando avviata esplicitamente, apre connessioni dirette agli MX sulla porta 25:
-i server destinatari vedono l'indirizzo IP, l'hostname EHLO e il mittente
-envelope configurati.
+visibili al resolver DNS configurato sul sistema.
 
 I file sorgente possono contenere dati personali. Il corpus di compatibilità
 contiene contatti reali e non fa parte di questo repository: i manutentori lo
@@ -51,8 +46,7 @@ usare dati sintetici, per esempio `utente@example.test`.
 
 ## Uso responsabile
 
-L'app raccoglie indirizzi da file e siti web e può verificare le caselle via
-SMTP. Chi la usa è titolare del trattamento dei dati che importa o raccoglie e
+L'app raccoglie indirizzi da file e siti web e non invia messaggi. Chi la usa è titolare del trattamento dei dati che importa o raccoglie e
 deve rispettare il GDPR e le norme sulle comunicazioni commerciali (base
 giuridica, informativa, opposizione). Il software è fornito senza garanzie,
 secondo la licenza MIT.
@@ -275,9 +269,9 @@ manualmente `PRAGMA user_version`: lo schema viene aggiornato dalle migrazioni.
    occhio) apre la scheda con tutti i campi del contatto. **Cancella** (icona
    cestino) chiede
    conferma: il contatto esce da elenco ed export, le righe sorgente restano in
-   quarantena e nessuna rivalidazione DNS lo ripristina; solo una nuova
+   quarantena; solo una nuova
    importazione dell'indirizzo lo riporta tra i contatti.
-6. Dopo blacklist, rivalidazione DNS, run IA o revisione di un gap, la pagina
+6. Dopo blacklist, run IA o revisione di un gap, la pagina
    **Contatti** si ricarica alla successiva apertura.
 7. Il **punteggio** (0-100) stima quanto il contatto sia ricco di dati utili e
    raggiungibile: 30 punti di specificità (persona e ruolo noti battono una
@@ -293,8 +287,7 @@ manualmente `PRAGMA user_version`: lo schema viene aggiornato dalle migrazioni.
    metodo o la confidenza della classificazione non contano, e non ci sono
    parole chiave di campagna né bonus legati alla ricerca. È salvato nel
    contatto e il database lo ricalcola da solo ogni volta che cambia un dato
-   che lo determina (importazione, aggiunta da Cerca lead, modifica, IA,
-   verifica caselle). Poiché la freschezza cala col tempo, all'avvio
+   che lo determina (importazione, aggiunta da Cerca lead, modifica, IA). Poiché la freschezza cala col tempo, all'avvio
    un ricalcolo completo, al più una volta al giorno, aggiorna solo i
    contatti il cui punteggio è cambiato. Il filtro **Punteggio minimo** vale
    per elenco ed esportazioni; la scheda **Dettagli** mostra il valore.
@@ -315,43 +308,13 @@ delle verifiche registra per singolo indirizzo solo gli esiti che lo escludono
 una sola volta nella cache del dominio.
 
 Gli indirizzi non esportabili e le righe di parsing malformate restano conservati
-con file, foglio, riga, motivo e punteggio iniziale. Sono consultabili nella sezione
-**Verifica caselle**; non appaiono nella tabella **Contatti** e non entrano mai nelle
-esportazioni.
+con file, foglio, riga, motivo e punteggio iniziale. Non appaiono nella tabella
+**Contatti** e non entrano mai nelle esportazioni.
 
 Gli indirizzi chiaramente automatici (`no-reply`, `do-not-reply`,
 `mailer-daemon`, `bounce`, `autoresponder` e varianti prudenti) sono conservati
-come candidati soppressi, ma non entrano in **Contatti**, export, rivalidazione
-DNS o coda SMTP. Caselle istituzionali utili come `info`, `segreteria`,
+come candidati soppressi, ma non entrano in **Contatti**, export. Caselle istituzionali utili come `info`, `segreteria`,
 `postmaster`, `privacy` e `webmaster` non sono escluse da questa regola.
-
-### Rivalidare DNS e verificare le caselle
-
-La pagina **Verifica caselle** unifica la gestione del recupero DNS e la verifica SMTP.
-Offre due azioni principali per l'invio: **Avvia rollout raccomandato** (pilot di 1.000 indirizzi e, se il
-gate di sicurezza lo consente, fino a 5.000) e **Probe Everything**. Prima di
-usarle occorre salvare un hostname EHLO FQDN controllato e un mittente envelope
-valido. STARTTLS, verifica del certificato e verifica del nome host non sono
-disattivabili; il client si ferma dopo `RCPT TO` e non invia mai `DATA`.
-
-**Rivalida solo DNS** non richiede l'identità SMTP. La prima importazione esegue
-già un controllo per ogni dominio distinto. La rivalidazione dedicata ricontrolla
-solo i domini con errore temporaneo (`temporary_failure`); il rollout SMTP
-rivaluta invece anche cache mancanti o scadute, rispettando i TTL DNS;
-non è necessario rinominare o modificare i file sorgente. Un dominio tornato
-instradabile può recuperare il contatto dalla quarantena (salvo i contatti
-cancellati manualmente e gli indirizzi tolti dalla blacklist), mentre un
-`no_routing` definitivo lo rimuove soltanto dalla proiezione esportabile e ne
-conserva candidato, riga sorgente e cronologia.
-
-La coda SMTP è persistente, rate-limited a livello globale, dominio e MX, con
-una sola connessione alla volta, retry dei soli errori temporanei e cooldown.
-Alla chiusura dell'app il job viene messo in pausa e deve essere ripreso
-esplicitamente: non continua mentre l'app è chiusa. Un'accettazione SMTP indica
-solo “accettato dal server”; catch-all, greylisting, policy e accettazione con
-bounce successivo impediscono di usarla come prova dell'esistenza di una
-casella. Gli esiti non cancellano contatti e non trasformano automaticamente
-un indirizzo in esportabile.
 
 ### Gestire la blacklist
 
@@ -615,12 +578,6 @@ variabile d'ambiente `TYPESAFE_API_KEY`, poi riprovare.
 **Validazione DNS lenta o incerta.** Controllare connettività, VPN, firewall e
 resolver DNS. Un esito DNS non prova che una casella esista; indica soltanto le
 caratteristiche osservabili del dominio.
-
-**Verifica SMTP non avviabile o tutta sconosciuta.** Configurare un hostname
-EHLO e un mittente envelope realmente controllati. Verificare che rete, ISP,
-VPN e firewall permettano TCP in uscita sulla porta 25. I server senza STARTTLS
-valido restano deliberatamente `unknown`; non abbassare la sicurezza TLS per
-ottenere un risultato.
 
 **Importazione senza risultati.** Verificare formato, codifica e presenza di
 indirizzi validi. I file `blacklist.txt` e `cancellami.txt` sono riconosciuti

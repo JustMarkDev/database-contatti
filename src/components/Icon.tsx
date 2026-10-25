@@ -11,7 +11,6 @@ import {
   File01Icon,
   PlusSignIcon,
   ViewIcon,
-  MailOpenIcon,
   PauseIcon,
   PlayIcon,
   Search01Icon,
@@ -34,7 +33,6 @@ export type IconName =
   | "play"
   | "stop"
   | "search"
-  | "verification"
   | "view"
   | "delete"
   | "download"
@@ -55,7 +53,6 @@ const icons: Record<IconName, IconSvgElement> = {
   play: PlayIcon,
   stop: StopIcon,
   search: Search01Icon,
-  verification: MailOpenIcon,
   view: ViewIcon,
   delete: Delete02Icon,
   download: Download01Icon,

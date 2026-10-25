@@ -75,7 +75,6 @@ function sections(c: Contact): DetailSection[] {
     [
       "Fonti",
       [
-        ["File", c.source_file],
         ["URL origine", c.source_url],
         ["Occorrenze", c.source_occurrence_count],
         ["Fonti indipendenti", c.independent_source_count],

@@ -39,6 +39,7 @@ RULES:
   - School codes in @istruzione.it or codes: *EE*=Primaria, *MM*=Secondaria di primo grado, *IC*=Istituto comprensivo, *IS*/*IT*/*IP*/*PS*=Secondaria di secondo grado, *AA*=Infanzia, *CT*=Centro territoriale/CPIA. Regional/school-office domains like *.istruzione.lombardia.it are NOT school codes: classify them as Istruzione with the listed territorial-school-office subcategory key.
   - SECTOR PRECEDENCE (most specific wins over generic Pubblica amministrazione):
     * Health bodies (ospedali, ASL/ASST/AUSL, IRCCS, cliniche, mailboxes on sanita.it / salute.gov.it about health services) belong to Sanità even when formally state-owned; use "Ministero / Ente statale" only for purely administrative ministry organs with no sector identity.
+    * Caritas and other charitable bodies belong to Enti religiosi ("Caritas / ente caritativo religioso"), not Sanità, even when they run health or social services.
     * Education bodies (scuole, uffici scolastici territoriali, ambiti territoriali, universities) belong to Istruzione even under the Ministry of Education.
     * Municipal/provincial/regional government stays Pubblica amministrazione.
   - "outcome": "proposal" (1+ candidates), "conflict" (2+ conflicting candidates), "taxonomy_gap" (gap object + candidates []), "insufficient" (candidates []).
@@ -109,7 +110,7 @@ RULES:
 - Evidence quotes: Every quote must be an exact verbatim substring from an imported record field in 'fields' with 'source_id', 'field', and 'quote'.
 - Email inference: The 'Email' field is an authorized grounded source.
 - School codes in @istruzione.it: *EE*=Primaria, *MM*=Secondaria di primo grado, *IC*=Istituto comprensivo, *IS*/*IT*/*IP*/*PS*=Secondaria di secondo grado, *AA*=Infanzia, *CT*=Centro territoriale/CPIA. Regional/school-office domains like *.istruzione.lombardia.it are NOT school codes: classify them as Istruzione with the listed territorial-school-office subcategory key.
-- SECTOR PRECEDENCE (most specific wins over generic Pubblica amministrazione): health bodies (ospedali, ASL/ASST/AUSL, IRCCS, cliniche, sanita.it / salute.gov.it mailboxes) belong to Sanità; education bodies (scuole, uffici e ambiti scolastici territoriali) belong to Istruzione; use "Ministero / Ente statale" only for purely administrative ministry organs without a sector identity.
+- SECTOR PRECEDENCE (most specific wins over generic Pubblica amministrazione): health bodies (ospedali, ASL/ASST/AUSL, IRCCS, cliniche, sanita.it / salute.gov.it mailboxes) belong to Sanità, but Caritas and other charitable bodies belong to Enti religiosi ("Caritas / ente caritativo religioso"); education bodies (scuole, uffici e ambiti scolastici territoriali) belong to Istruzione; use "Ministero / Ente statale" only for purely administrative ministry organs without a sector identity.
 - "outcome": "proposal" (1+ candidates), "conflict" (2+ conflicting candidates), "taxonomy_gap" (gap object + candidates []), "insufficient" (candidates []).
 - A proposal should include a subcategory whenever the category is known. If the specific subtype is not supported, use the category's listed generic subcategory.
 - When no approved category fits, use Varie / Ente non determinato. A taxonomy_gap is optional and should be proposed only when a concrete additive taxonomy entry is genuinely useful.

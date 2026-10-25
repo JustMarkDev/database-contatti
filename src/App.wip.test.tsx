@@ -13,17 +13,14 @@ afterEach(() => {
 });
 
 describe("release build gate", () => {
-  it.each(["Verifica caselle", "Cerca lead"])(
-    "shows 'Lavori in corso' instead of %s outside dev",
-    async (title) => {
-      vi.stubEnv("DEV", false);
-      vi.resetModules();
-      const { default: App } = await import("./App");
-      render(<App />);
+  it.each(["Cerca lead"])("shows 'Lavori in corso' instead of %s outside dev", async (title) => {
+    vi.stubEnv("DEV", false);
+    vi.resetModules();
+    const { default: App } = await import("./App");
+    render(<App />);
 
-      await userEvent.click(screen.getByTitle(title));
-      const island = await screen.findByRole("region", { name: title });
-      expect(island).toHaveTextContent("Lavori in corso");
-    },
-  );
+    await userEvent.click(screen.getByTitle(title));
+    const island = await screen.findByRole("region", { name: title });
+    expect(island).toHaveTextContent("Lavori in corso");
+  });
 });

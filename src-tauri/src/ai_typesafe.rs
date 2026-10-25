@@ -84,6 +84,7 @@ pub struct CascadeJudgment {
     pub category: ChoiceAnswer,
     pub subcategory: ChoiceAnswer,
     pub needs_taxonomy_gap: NoulAnswer,
+    pub country: Option<ChoiceAnswer>,
     pub municipality: Option<ChoiceAnswer>,
     pub province: Option<ChoiceAnswer>,
     pub region: Option<ChoiceAnswer>,
@@ -562,6 +563,7 @@ pub fn build_batched_pass1_questions(
                 "criteria": category_criteria.clone()
             }),
         );
+        questions.insert(format!("country__{index}"), country_question(index));
         if let Some(place) = places.get(index) {
             for (key, question) in build_geography_questions(&ambiguous_places_for_jev(place)) {
                 questions.insert(format!("{key}__{index}"), question);
@@ -1023,6 +1025,20 @@ pub fn build_cascade_questions(
     questions
 }
 
+fn country_question(index: usize) -> Value {
+    json!({
+        "type": "choice",
+        "instructions": format!(
+            "Which country is `contacts[{index}].fields` in? Use address, phone prefix, canton/province and domain as evidence. Keep the stored `country` unless the evidence clearly contradicts it."
+        ),
+        "criteria": {
+            "Italia": "Italian comune, province, region, phone +39 or .it domain",
+            "Svizzera": "Swiss municipality, canton, phone +41 or .ch domain",
+            "unknown": "No country is reliably supported by the evidence"
+        }
+    })
+}
+
 pub fn build_geography_questions(place_candidates: &PlaceCandidates) -> Map<String, Value> {
     let mut questions = Map::new();
     if !place_candidates.municipalities.is_empty() {
@@ -1090,6 +1106,8 @@ pub struct PlaceCandidates {
 }
 
 const MAX_PLACE_OPTIONS: usize = 8;
+/// Overwriting a stored country is riskier than filling an empty place, so the bar is higher.
+const COUNTRY_MIN_CONFIDENCE: f64 = 0.9;
 
 pub fn extract_place_candidates(source_context: &str, country: &str) -> PlaceCandidates {
     let swiss = matches!(
@@ -1426,6 +1444,7 @@ pub fn parse_cascade_judgment(response: &Value) -> Result<CascadeJudgment, Provi
         subcategory,
         needs_taxonomy_gap: optional_answer(answers, "needs_taxonomy_gap")?
             .unwrap_or(NoulAnswer { noul: 0.0 }),
+        country: optional_answer(answers, "country")?,
         municipality: optional_answer(answers, "municipality")?,
         province: optional_answer(answers, "province")?.or(optional_answer(answers, "canton")?),
         region: optional_answer(answers, "region")?,
@@ -1693,12 +1712,21 @@ fn geography_from_judgment(
             });
         }
     }
+    // A country answer is a proposal on its own, even without place claims.
+    let country = judgment
+        .country
+        .as_ref()
+        .filter(|answer| answer.confidence >= COUNTRY_MIN_CONFIDENCE)
+        .and_then(|answer| {
+            matches!(answer.choice.as_str(), "Italia" | "Svizzera").then(|| answer.choice.clone())
+        });
     GeographicResult {
-        outcome: if claims.is_empty() {
+        outcome: if claims.is_empty() && country.is_none() {
             "insufficient".to_owned()
         } else {
             "proposal".to_owned()
         },
+        country,
         claims,
         summary: Some("Geografia Jev su gazetteer".to_owned()),
     }
@@ -1839,6 +1867,7 @@ mod tests {
                 probabilities: HashMap::new(),
             },
             needs_taxonomy_gap: NoulAnswer { noul: gap },
+            country: None,
             municipality: None,
             province: None,
             region: None,

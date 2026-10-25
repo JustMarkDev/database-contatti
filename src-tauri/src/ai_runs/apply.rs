@@ -340,21 +340,6 @@ pub(super) fn is_placeholder(value: &str) -> bool {
         )
 }
 
-#[cfg(test)]
-pub(crate) fn taxonomy_candidate_values(
-    db: &Connection,
-    candidate: &TaxonomyCandidate,
-) -> Result<(String, Option<String>), String> {
-    let active_version: String = db
-        .query_row(
-            "SELECT semantic_version FROM taxonomy_versions WHERE status='active'",
-            [],
-            |row| row.get(0),
-        )
-        .map_err(|error| error.to_string())?;
-    taxonomy_candidate_values_at(db, candidate, &active_version)
-}
-
 fn taxonomy_candidate_values_at(
     db: &Connection,
     candidate: &TaxonomyCandidate,
@@ -369,15 +354,8 @@ fn taxonomy_candidate_values_at(
             |r| r.get(0),
         )
         .map_err(|e| e.to_string())?;
-    let mut subcategory = candidate.subcategory_key.as_deref().map(|key| db.query_row("SELECT s.display_name FROM taxonomy_entries s JOIN taxonomy_versions v ON v.id=s.taxonomy_version_id WHERE v.semantic_version=?1 AND s.level='subcategory' AND s.parent_semantic_key=?2 AND s.semantic_key=?3", params![catalog_version, candidate.category_key, key], |r| r.get(0))).transpose().map_err(|e| e.to_string())?;
+    let subcategory = candidate.subcategory_key.as_deref().map(|key| db.query_row("SELECT s.display_name FROM taxonomy_entries s JOIN taxonomy_versions v ON v.id=s.taxonomy_version_id WHERE v.semantic_version=?1 AND s.level='subcategory' AND s.parent_semantic_key=?2 AND s.semantic_key=?3", params![catalog_version, candidate.category_key, key], |r| r.get(0))).transpose().map_err(|e| e.to_string())?;
 
-    if category.eq_ignore_ascii_case("Varie")
-        && subcategory
-            .as_deref()
-            .is_some_and(|s: &str| s.eq_ignore_ascii_case("Contatto personale"))
-    {
-        subcategory = Some("Ente non determinato".to_owned());
-    }
     Ok((category, subcategory))
 }
 
@@ -387,6 +365,38 @@ pub(crate) fn apply_geography_result(
     result: &GeographicResult,
     run_id: &str,
 ) -> Result<&'static str, String> {
+    if let Some(country) = result
+        .country
+        .as_deref()
+        .filter(|c| matches!(*c, "Italia" | "Svizzera") && *c != contact.paese)
+    {
+        db.execute(
+            "UPDATE contacts SET paese=?1 WHERE id=?2",
+            params![country, contact.id],
+        )
+        .map_err(|e| e.to_string())?;
+        let evidence = result
+            .summary
+            .iter()
+            .map(|s| format!("Motivo: {s}"))
+            .collect::<Vec<_>>();
+        record_ai_field_change(
+            db,
+            run_id,
+            contact,
+            FieldChange {
+                review_id: None,
+                field_name: "paese",
+                old_value: Some(&contact.paese),
+                new_value: Some(country),
+                confidence: 0.0,
+                evidence: &evidence,
+                pending_review: false,
+            },
+        )?;
+        // shortcut: place claims were picked from the old country's gazetteer, skip them until the next run.
+        return Ok("updated");
+    }
     if result.outcome == "insufficient" {
         return Ok("skipped");
     }

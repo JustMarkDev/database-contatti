@@ -30,6 +30,12 @@ pub(crate) const SUBCATEGORY_ALIASES: &[(&str, &str, &str)] = &[
         "Volontariato / Assistenza",
         "Volontariato / solidarietà",
     ),
+    (
+        "Turismo e promozione territoriale",
+        "APT",
+        "Azienda di Promozione Turistica",
+    ),
+    ("Varie", "Contatto personale", "Ente non determinato"),
 ];
 
 pub(crate) fn fallback_subcategory(category: &str) -> Option<&'static str> {

@@ -873,7 +873,11 @@ pub(crate) fn deterministic_classification(
             "Turismo e promozione territoriale",
             "Ufficio turistico",
         ),
-        ("apt", "Turismo e promozione territoriale", "APT"),
+        (
+            "apt",
+            "Turismo e promozione territoriale",
+            "Azienda di Promozione Turistica",
+        ),
         (
             "eventi",
             "Turismo e promozione territoriale",
@@ -948,7 +952,7 @@ pub(crate) fn deterministic_classification(
     if context.contains("contatti personali") {
         return (
             "Varie".to_owned(),
-            Some("Contatto personale".to_owned()),
+            crate::taxonomy::fallback_subcategory("Varie").map(str::to_owned),
             "rule".to_owned(),
             0.75,
             vec!["nome file: contatti personali".to_owned()],

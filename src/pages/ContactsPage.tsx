@@ -610,12 +610,6 @@ export function ContactsPage({ active, refreshKey, busy, setBusy, onSummary, onE
         </div>
         <div className="advanced-filters-grid">
           <MultiFilter
-            label="File origine"
-            options={options.source_file}
-            value={filters.source_file}
-            onChange={(source_file) => setFilters({ ...filters, source_file })}
-          />
-          <MultiFilter
             label="Categoria"
             options={categoryOptions}
             value={filters.category}
@@ -657,12 +651,6 @@ export function ContactsPage({ active, refreshKey, busy, setBusy, onSummary, onE
             options={options.provincia}
             value={filters.provincia}
             onChange={(provincia) => setFilters({ ...filters, provincia })}
-          />
-          <MultiFilter
-            label="Comune"
-            options={options.comune}
-            value={filters.comune}
-            onChange={(comune) => setFilters({ ...filters, comune })}
           />
           <MultiFilter
             label="PEC"

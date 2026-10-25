@@ -250,7 +250,7 @@ fn app_performance_list_search_export_scale() {
     let facet_started = Instant::now();
     let facets = load_filter_options(&db).expect("facets");
     let facet_ms = facet_started.elapsed().as_secs_f64() * 1_000.0;
-    assert!(!facets.category.is_empty() || !facets.comune.is_empty());
+    assert!(!facets.category.is_empty());
     println!("[performance] facets contacts={CONTACT_COUNT} facet_ms={facet_ms:.3}");
 
     let export_path = std::env::temp_dir().join(format!(

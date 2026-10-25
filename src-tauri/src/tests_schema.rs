@@ -178,12 +178,6 @@ fn fresh_schema_migrations_are_complete_versioned_and_idempotent() {
         "entity_contact_points",
         "quality_score_snapshots",
         "quality_score_components",
-        "mailbox_verification_settings",
-        "mailbox_verification_jobs",
-        "mailbox_verification_tasks",
-        "mailbox_verification_attempts",
-        "mailbox_verification_target_state",
-        "mailbox_verification_control",
         "taxonomy_entries",
         "taxonomy_change_candidates",
         "ai_run_batches",
@@ -1716,6 +1710,7 @@ fn geographic_proposal(place: &str) -> GeographicResult {
 fn geographic_claims(claims: &[(&str, &str)]) -> GeographicResult {
     GeographicResult {
         outcome: "proposal".to_owned(),
+        country: None,
         claims: claims
             .iter()
             .map(|(level, place)| GeographicPlaceClaim {
@@ -2733,8 +2728,9 @@ fn canonical_subcategory_migration_repairs_every_known_alias_and_foreign_key() {
     )
     .unwrap();
 
-    run_ordered_migrations(&db, None).expect("apply canonical label migration");
-    run_ordered_migrations(&db, None).expect("idempotent reopen");
+    // Stop before migration 68, which deletes the forze dell'ordine contacts.
+    run_ordered_migrations(&db, Some(68)).expect_err("apply canonical label migration");
+    run_ordered_migrations(&db, Some(68)).expect_err("idempotent reopen");
 
     for (index, &(category, _, canonical)) in
         crate::taxonomy::SUBCATEGORY_ALIASES.iter().enumerate()
@@ -2768,6 +2764,25 @@ fn canonical_subcategory_migration_repairs_every_known_alias_and_foreign_key() {
         )
         .unwrap();
     assert_eq!(claim, "Forze dell'ordine");
+
+    run_ordered_migrations(&db, None).expect("apply retirement migration");
+    let count = |sql: &str| -> i64 { db.query_row(sql, [], |row| row.get(0)).unwrap() };
+    assert_eq!(
+        count("SELECT COUNT(*) FROM contacts WHERE subcategory='Forze dell''ordine'"),
+        0
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM subcategories WHERE name='Forze dell''ordine' AND active=1"),
+        1
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM subcategories WHERE name='Contatto personale' AND active=1"),
+        0
+    );
+    assert_eq!(
+        count("SELECT COUNT(*) FROM taxonomy_entries WHERE display_name='Contatto personale'"),
+        0
+    );
 }
 
 #[test]
@@ -3010,20 +3025,143 @@ fn discarding_pending_reviews_keeps_resolved_and_clears_needs_review() {
 }
 
 #[test]
-fn ai_candidate_remaps_personal_contact_to_undetermined_entity() {
-    let mut db = Connection::open_in_memory().expect("database");
-    migrate_database(&mut db, None, false).expect("migration");
-    let candidate = crate::TaxonomyCandidate {
-        category_key: "varie".to_owned(),
-        subcategory_key: Some("contattopersonale".to_owned()),
-        category_grade: crate::EvidenceGrade::Direct,
-        subcategory_grade: Some(crate::EvidenceGrade::Direct),
-        category_evidence: Vec::new(),
-        subcategory_evidence: Vec::new(),
+fn retirement_migration_deletes_removed_subcategory_data_and_keeps_taxonomy() {
+    let db = Connection::open_in_memory().expect("in-memory db");
+    run_ordered_migrations(&db, Some(68)).expect_err("stop before migration 68");
+    for (id, category, subcategory) in [
+        ("keep", "Cultura", "Biblioteca"),
+        ("clinic", "Sanità", "Clinica / IRCCS / Struttura sanitaria"),
+        ("police", "Pubblica amministrazione", "Forze dell'ordine"),
+        (
+            "court",
+            "Pubblica amministrazione",
+            "Tribunale / Ufficio giudiziario",
+        ),
+    ] {
+        db.execute(
+            "INSERT INTO contacts(
+                id,email,email_local_part,email_domain,email_tld,status,validation_notes,
+                source_file,category,subcategory,contact_kind,paese
+             ) VALUES(?1,?2,'x','example.test','test','valid','[]','fixture',?3,?4,
+                      'istituzionale','Italia')",
+            params![id, format!("{id}@example.test"), category, subcategory],
+        )
+        .unwrap();
+        db.execute(
+            "INSERT INTO classification_claims(id,contact_id,category,subcategory,confidence,created_at)
+             VALUES(?1,?1,?2,?3,1,'now')",
+            params![id, category, subcategory],
+        )
+        .unwrap();
+    }
+    db.execute(
+        "INSERT INTO search_seeds(id,list_name,name,subcategory,created_at)
+         VALUES('seed-police','l','Questura','Forze dell''ordine','now'),
+               ('seed-keep','l','Biblioteca','Biblioteca','now')",
+        [],
+    )
+    .unwrap();
+
+    run_ordered_migrations(&db, None).expect("apply retirement migration");
+
+    let ids = |sql: &str| -> Vec<String> {
+        let mut statement = db.prepare(sql).unwrap();
+        statement
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
     };
-    let (category, subcategory) = taxonomy_candidate_values(&db, &candidate).unwrap();
-    assert_eq!(category, "Varie");
-    assert_eq!(subcategory.as_deref(), Some("Ente non determinato"));
+    assert_eq!(ids("SELECT id FROM contacts"), ["keep"]);
+    assert_eq!(ids("SELECT id FROM classification_claims"), ["keep"]);
+    assert_eq!(ids("SELECT id FROM search_seeds"), ["seed-keep"]);
+    assert_eq!(
+        ids("SELECT name FROM subcategories WHERE active=1 AND name IN
+             ('Clinica / IRCCS / Struttura sanitaria','Forze dell''ordine','Tribunale / Ufficio giudiziario')
+             ORDER BY name")
+        .len(),
+        3
+    );
+}
+
+#[test]
+fn sanita_migration_deletes_health_contacts_and_rescues_caritas() {
+    let db = Connection::open_in_memory().expect("in-memory db");
+    run_ordered_migrations(&db, Some(69)).expect_err("stop before migration 69");
+    for (id, email, category, subcategory) in [
+        (
+            "hospital",
+            "ospedale@example.test",
+            "Sanità",
+            "Ospedale / Azienda ospedaliera",
+        ),
+        (
+            "asl",
+            "asl@example.test",
+            "Sanità",
+            "ASL / ASST / Distretto sanitario",
+        ),
+        (
+            "other",
+            "rsa@example.test",
+            "Sanità",
+            "Altro ente sanitario",
+        ),
+        (
+            "caritas",
+            "caritas.diocesana@example.test",
+            "Sanità",
+            "Altro ente sanitario",
+        ),
+        ("keep", "biblioteca@example.test", "Cultura", "Biblioteca"),
+    ] {
+        db.execute(
+            "INSERT INTO contacts(
+                id,email,email_local_part,email_domain,email_tld,status,validation_notes,
+                source_file,category,subcategory,contact_kind,paese
+             ) VALUES(?1,?2,'x','example.test','test','valid','[]','fixture',?3,?4,
+                      'istituzionale','Italia')",
+            params![id, email, category, subcategory],
+        )
+        .unwrap();
+    }
+    db.execute(
+        "INSERT INTO search_seeds(id,list_name,name,category,created_at)
+         VALUES('seed-health','l','Ospedale','Sanità','now'),
+               ('seed-keep','l','Biblioteca','Cultura','now')",
+        [],
+    )
+    .unwrap();
+
+    run_ordered_migrations(&db, None).expect("apply sanità migration");
+
+    let ids = |sql: &str| -> Vec<String> {
+        let mut statement = db.prepare(sql).unwrap();
+        statement
+            .query_map([], |row| row.get(0))
+            .unwrap()
+            .collect::<Result<_, _>>()
+            .unwrap()
+    };
+    assert_eq!(
+        ids("SELECT id FROM contacts ORDER BY id"),
+        ["caritas", "keep"]
+    );
+    assert_eq!(ids("SELECT id FROM search_seeds"), ["seed-keep"]);
+    let (category, linked): (String, String) = db
+        .query_row(
+            "SELECT c.category,s.name FROM contacts c JOIN subcategories s ON s.id=c.subcategory_id
+             WHERE c.id='caritas'",
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?)),
+        )
+        .unwrap();
+    assert_eq!(category, "Enti religiosi");
+    assert_eq!(linked, "Caritas / ente caritativo religioso");
+    assert_eq!(
+        ids("SELECT name FROM subcategories WHERE active=1 AND name='Altro ente sanitario'").len(),
+        1
+    );
 }
 
 #[test]
@@ -3604,4 +3742,36 @@ fn audit_repair_migration_clears_alias_geography_and_restores_jev_agreements() {
         )
         .unwrap();
     assert_eq!(catalog, "1.4.0");
+}
+
+#[test]
+fn geographic_apply_changes_country_only_to_a_supported_value() {
+    let (db, contact) = setup_geographic_apply_test();
+    let mut result = geographic_proposal("Torino");
+    result.country = Some("Francia".to_owned());
+    apply_geography_result(&db, &contact, &result, "geo-run").unwrap();
+    let paese = |db: &Connection| -> String {
+        db.query_row(
+            "SELECT paese FROM contacts WHERE id=?1",
+            params![contact.id],
+            |r| r.get(0),
+        )
+        .unwrap()
+    };
+    assert_eq!(paese(&db), contact.paese);
+
+    result.country = Some("Svizzera".to_owned());
+    assert_eq!(
+        apply_geography_result(&db, &contact, &result, "geo-run").unwrap(),
+        "updated"
+    );
+    assert_eq!(paese(&db), "Svizzera");
+    let logged: i64 = db
+        .query_row(
+            "SELECT COUNT(*) FROM ai_field_changes WHERE field_name='paese'",
+            [],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(logged, 1);
 }

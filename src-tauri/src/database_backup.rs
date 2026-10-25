@@ -92,11 +92,6 @@ fn operation_in_progress(db: &Connection) -> Result<Option<&'static str>, String
     )? {
         return Ok(Some("un'esecuzione IA"));
     }
-    if active(
-        "SELECT EXISTS(SELECT 1 FROM mailbox_verification_jobs WHERE status IN ('preparing','running'))",
-    )? {
-        return Ok(Some("una verifica caselle"));
-    }
     Ok(None)
 }
 

@@ -247,8 +247,8 @@ fn classifies_personal_contacts_as_miscellaneous() {
     };
     let (category, subcategory, _, _, _) = deterministic_classification(&file, &BTreeMap::new());
     assert_eq!(category, "Varie");
-    assert_eq!(subcategory.as_deref(), Some("Contatto personale"));
-    assert!(taxonomy_valid("Varie", Some("Contatto personale")));
+    assert_eq!(subcategory.as_deref(), Some("Ente non determinato"));
+    assert!(!taxonomy_valid("Varie", Some("Contatto personale")));
 }
 
 #[test]
@@ -1821,46 +1821,6 @@ fn geographic_facets_filter_out_cadastral_codes_and_numbers_and_normalize_names(
          ('c-24','u24@example.it','u24','example','.it','valid','[]','f.txt','Varie','Lazio','NonExistentProv123','Corrupted123Comune');"
     ).unwrap();
 
-    let comuni = crate::contacts::facet_values(&db, "comune").unwrap();
-    let comune_names: Vec<&str> = comuni.iter().map(|c| c.value.as_str()).collect();
-    assert_eq!(
-        comune_names
-            .iter()
-            .filter(|&&c| c == "Andorno Micca")
-            .count(),
-        1,
-        "Adorno Micca, Adorno Micca (bi) and Andorno Micca - BI should merge into exactly 1 facet"
-    );
-    assert_eq!(
-        comune_names.iter().filter(|&&c| c == "Firenze").count(),
-        1,
-        "Comune di Firenze and Firenze should merge"
-    );
-    assert_eq!(
-        comune_names
-            .iter()
-            .filter(|&&c| c == "Abetone Cutigliano")
-            .count(),
-        1,
-        "Abetone and Abetone Cutigliano should merge into 1 facet"
-    );
-    assert_eq!(
-        comune_names.iter().filter(|&&c| c == "Belvì").count(),
-        1,
-        "Belvi, Belvì, Belvi' should merge into 1 facet"
-    );
-    assert!(
-        comune_names.contains(&"Cantù"),
-        "Accented city Cantù should be preserved"
-    );
-    assert!(
-        comune_names.contains(&"San Donà di Piave"),
-        "Accented city San Donà with stripped - VE should be preserved"
-    );
-    assert!(!comune_names.contains(&"A754"));
-    assert!(!comune_names.contains(&"B042"));
-    assert!(!comune_names.contains(&"Corrupted123Comune"));
-
     let regioni = crate::contacts::facet_values(&db, "regione").unwrap();
     let region_names: Vec<&str> = regioni.iter().map(|r| r.value.as_str()).collect();
     assert_eq!(
@@ -2706,7 +2666,7 @@ fn discovery_pages() -> Vec<FetchedPage> {
 
 #[test]
 fn search_discovery_migration_creates_tables_fresh_and_upgrades_from_v46() {
-    assert_eq!(LATEST_SCHEMA_VERSION, 66);
+    assert_eq!(LATEST_SCHEMA_VERSION, 69);
 
     let db = Connection::open_in_memory().unwrap();
     setup_schema(&db).unwrap();
@@ -4321,80 +4281,6 @@ fn routable() -> DomainValidation {
         dns_checked_at: None,
         dns_expires_at: None,
     }
-}
-
-#[test]
-fn dns_revalidation_uses_full_domains_and_keeps_contacts() {
-    let mut db = Connection::open_in_memory().unwrap();
-    setup_schema(&db).unwrap();
-    seed_linked_contact(&db, "c1", "utente@example.test");
-    let domains: Vec<String> = crate::mailbox_verification::dns_revalidation_domain_state(&db)
-        .unwrap()
-        .into_iter()
-        .map(|(domain, _, _)| domain)
-        .collect();
-    assert_eq!(domains, vec!["example.test".to_owned()]);
-
-    let report = crate::mailbox_verification::apply_dns_results(
-        &mut db,
-        vec![("example.test".to_owned(), routable())],
-        1,
-    )
-    .unwrap();
-    assert_eq!(report.separated_contacts, 0);
-    let status: String = db
-        .query_row("SELECT status FROM contacts WHERE id='c1'", [], |row| {
-            row.get(0)
-        })
-        .unwrap();
-    assert_eq!(status, "valid");
-}
-
-#[test]
-fn dns_revalidation_never_restores_removed_or_lifted_contacts() {
-    let mut db = Connection::open_in_memory().unwrap();
-    setup_schema(&db).unwrap();
-    for (id, reason) in [
-        ("removed", "manual_contact_removal"),
-        ("lifted", "blacklist_lifted"),
-        ("dns", "dns_unverified"),
-    ] {
-        seed_linked_contact(&db, id, &format!("{id}@example.test"));
-        db.execute("DELETE FROM contacts WHERE id=?1", params![id])
-            .unwrap();
-        db.execute(
-            "UPDATE email_candidates SET contact_id=NULL,current_disposition='quarantined',
-                 status='quarantined',candidate_status='quarantined',disposition_reason=?2
-             WHERE id=?1",
-            params![format!("candidate-{id}"), reason],
-        )
-        .unwrap();
-    }
-    let report = crate::mailbox_verification::apply_dns_results(
-        &mut db,
-        vec![("example.test".to_owned(), routable())],
-        1,
-    )
-    .unwrap();
-    assert_eq!(
-        report.promoted_contacts, 1,
-        "only the DNS quarantine recovers"
-    );
-    let emails: Vec<String> = db
-        .prepare("SELECT email FROM contacts ORDER BY email")
-        .unwrap()
-        .query_map([], |row| row.get(0))
-        .unwrap()
-        .map(Result::unwrap)
-        .collect();
-    assert_eq!(emails, vec!["dns@example.test".to_owned()]);
-    let promoted_domain: String = db
-        .query_row("SELECT email_domain FROM contacts", [], |row| row.get(0))
-        .unwrap();
-    assert_eq!(
-        promoted_domain, "example",
-        "same column format as the importer"
-    );
 }
 
 #[test]

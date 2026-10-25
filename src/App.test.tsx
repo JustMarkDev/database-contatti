@@ -66,7 +66,6 @@ const dashboard = {
     macroarea: [],
     regione: [],
     provincia: [],
-    comune: [],
     pec: [],
     classification_method: [],
     classification_confidence: [],
@@ -205,18 +204,11 @@ function defaultInvoke(command: string) {
   if (command === "list_ai_runs") return Promise.resolve([]);
   if (command === "get_resumable_ai_run") return Promise.resolve(null);
   if (command === "list_ai_field_changes") return Promise.resolve({ changes: [], total: 0 });
-  if (command === "list_candidates")
-    return Promise.resolve({
-      candidates: [],
-      total: 0,
-      limit: 50,
-      offset: 0,
-    });
   return Promise.resolve({});
 }
 
 describe("App orchestration", () => {
-  it("places mailbox verification directly below contacts in the sidebar", async () => {
+  it("places AI classification directly below contacts in the sidebar", async () => {
     render(<App />);
     await screen.findByText("info@example.it");
 
@@ -225,7 +217,7 @@ describe("App orchestration", () => {
       .getAllByRole("button")
       .map((button) => button.getAttribute("title"));
 
-    expect(sidebarItems.slice(0, 2)).toEqual(["Contatti", "Verifica caselle"]);
+    expect(sidebarItems.slice(0, 2)).toEqual(["Contatti", "Classificazione IA"]);
     expect(sidebarItems).not.toContain("Candidati");
     expect(sidebarItems).not.toContain("Impostazioni");
 
@@ -241,7 +233,7 @@ describe("App orchestration", () => {
     const titles = within(navigation)
       .getAllByRole("button")
       .map((button) => button.getAttribute("title"));
-    expect(titles.slice(0, 2)).toEqual(["Contatti", "Verifica caselle"]);
+    expect(titles.slice(0, 2)).toEqual(["Contatti", "Classificazione IA"]);
     expect(titles.indexOf("Cerca lead")).toBeLessThan(titles.indexOf("Blacklist"));
 
     await userEvent.click(screen.getByTitle("Cerca lead"));
@@ -250,101 +242,6 @@ describe("App orchestration", () => {
     expect(
       within(island).getByRole("heading", { level: 1, name: "Cerca lead" }),
     ).toBeInTheDocument();
-  });
-
-  it("keeps mailbox verification behind identity preflight and confirms the full verification", async () => {
-    let preflightReady = false;
-    const verificationOverview = () => ({
-      eligible_contacts: 123,
-      eligible_domains: 8,
-      eligible_mx_hosts: 4,
-      blacklisted_contacts: 3,
-      suppressed_contacts: 2,
-      non_contact_mailboxes: 1,
-      non_routable_contacts: 6,
-      temporary_dns_failures: 0,
-      preflight_ok: preflightReady,
-      preflight_message: preflightReady ? null : "Configura l'identità SMTP",
-      settings: preflightReady
-        ? {
-            ehlo_hostname: "verifier.example.it",
-            envelope_sender: "verifier@example.it",
-            starttls_required: true,
-            global_rate_per_minute: 5,
-            max_concurrency: 1,
-          }
-        : null,
-      status: null,
-      last_completed_at: null,
-    });
-    invoke.mockImplementation((command: string) => {
-      if (command === "get_mailbox_verification_overview")
-        return Promise.resolve(verificationOverview());
-      if (command === "get_mailbox_verification_status") return Promise.resolve(null);
-      if (command === "save_mailbox_verification_settings") {
-        preflightReady = true;
-        return Promise.resolve();
-      }
-      if (command === "revalidate_mailbox_dns")
-        return Promise.resolve({
-          domains_examined: 8,
-          domains_revalidated: 3,
-          routing_ok: 2,
-          no_routing: 0,
-          temporary_failures: 1,
-          promoted_contacts: 1,
-          separated_contacts: 0,
-        });
-      if (command === "start_mailbox_verification")
-        return Promise.resolve({ state: "running", mode: "everything", processed: 0, total: 123 });
-      return defaultInvoke(command);
-    });
-
-    render(<App />);
-    await screen.findByText("info@example.it");
-    await userEvent.click(screen.getByTitle("Verifica caselle"));
-    expect(await screen.findByRole("heading", { name: "Verifica caselle" })).toBeInTheDocument();
-    const island = screen.getByRole("region", { name: "Verifica caselle" });
-    expect(island.closest(".workspace")).not.toBeNull();
-    expect(
-      within(island).getByRole("heading", {
-        name: "Recupero DNS (Indirizzi con errore temporaneo)",
-      }),
-    ).toBeInTheDocument();
-    expect(within(island).getByRole("heading", { name: "Identità SMTP" })).toBeInTheDocument();
-    expect(within(island).getByRole("heading", { name: "Avvia verifica" })).toBeInTheDocument();
-    expect(
-      within(island).getByRole("heading", { name: "Attività precedente" }),
-    ).toBeInTheDocument();
-    expect(screen.getByText("Da configurare")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Avvia verifica graduale" })).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Verifica completa" })).toBeDisabled();
-
-    await userEvent.type(screen.getByLabelText("Hostname EHLO"), "verifier.example.it");
-    await userEvent.type(screen.getByLabelText("Mittente envelope"), "verifier@example.it");
-    await userEvent.click(screen.getByRole("button", { name: "Salva identità" }));
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("save_mailbox_verification_settings", {
-        settings: expect.objectContaining({
-          ehlo_hostname: "verifier.example.it",
-          envelope_sender: "verifier@example.it",
-          starttls_required: true,
-          max_concurrency: 1,
-        }),
-      }),
-    );
-    await waitFor(() =>
-      expect(screen.getByRole("button", { name: "Avvia verifica graduale" })).toBeEnabled(),
-    );
-    await userEvent.click(screen.getByRole("button", { name: "Rivalida DNS" }));
-    expect(await screen.findByText(/Ultimo DNS:/)).toHaveTextContent("3 domini");
-    await userEvent.click(screen.getByRole("button", { name: "Verifica completa" }));
-    expect(await screen.findByRole("alertdialog")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Conferma verifica completa" })).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Conferma verifica completa" }));
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("start_mailbox_verification", { mode: "everything" }),
-    );
   });
 
   afterEach(() => {
@@ -415,7 +312,6 @@ describe("App orchestration", () => {
 
     for (const [title, heading] of [
       ["Classificazione IA", "Classificazione IA"],
-      ["Verifica caselle", "Verifica caselle"],
       ["Blacklist", "Blacklist"],
       ["Impostazioni", "Impostazioni"],
       ["Contatti", "Contatti"],
@@ -934,22 +830,14 @@ describe("App orchestration", () => {
     );
   });
 
-  it("loads deferred pages on first activation and preserves their state", async () => {
+  it("loads deferred pages on first activation", async () => {
     render(<App />);
     await screen.findByText("info@example.it");
-    expect(screen.queryByRole("heading", { name: "Verifica caselle" })).not.toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Classificazione IA" })).not.toBeInTheDocument();
     expect(invoke.mock.calls.filter(([command]) => command === "detect_typesafe")).toHaveLength(0);
 
-    await userEvent.click(screen.getByTitle("Verifica caselle"));
-    expect(await screen.findByRole("heading", { name: "Verifica caselle" })).toBeInTheDocument();
-    const search = screen.getByRole("textbox", { name: "Cerca candidati recuperabili" });
-    await userEvent.type(search, "archived@example.it");
-
-    await userEvent.click(screen.getByTitle("Contatti"));
-    expect(screen.queryByRole("heading", { name: "Verifica caselle" })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByTitle("Verifica caselle"));
-    expect(await screen.findByDisplayValue("archived@example.it")).toBeInTheDocument();
+    await userEvent.click(screen.getByTitle("Classificazione IA"));
+    expect(await screen.findByRole("heading", { name: "Classificazione IA" })).toBeInTheDocument();
   });
 
   it("applies contact filters without rebuilding dashboard facets", async () => {
@@ -1127,7 +1015,7 @@ describe("App orchestration", () => {
         offset: 100,
       }),
     );
-    fireEvent.change(screen.getByPlaceholderText("Cerca email o file di origine…"), {
+    fireEvent.change(screen.getByPlaceholderText("Cerca email…"), {
       target: { value: "new" },
     });
     await waitFor(() =>
@@ -1448,7 +1336,7 @@ describe("App orchestration", () => {
     fireEvent.click(screen.getByTitle("Blacklist"));
     await act(() => vi.advanceTimersByTimeAsync(150));
     expect(blacklistCalls).toBe(1);
-    fireEvent.change(screen.getByPlaceholderText("Cerca email o file di origine…"), {
+    fireEvent.change(screen.getByPlaceholderText("Cerca email…"), {
       target: { value: "new" },
     });
     await act(() => vi.advanceTimersByTimeAsync(150));
@@ -1559,7 +1447,7 @@ describe("App orchestration", () => {
     await screen.findByText("all@blocked.it");
     const size = () => screen.getByText("In blacklist").nextElementSibling?.textContent;
     await waitFor(() => expect(size()).toBe("40"));
-    await userEvent.type(screen.getByPlaceholderText("Cerca email o file di origine…"), "found");
+    await userEvent.type(screen.getByPlaceholderText("Cerca email…"), "found");
     await screen.findByText("found@blocked.it");
     expect(size()).toBe("40");
   });

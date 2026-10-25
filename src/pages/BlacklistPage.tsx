@@ -251,7 +251,7 @@ export function BlacklistPage({
                 className="search-wide pl-9"
                 value={query}
                 onChange={(e) => setQuery(e.currentTarget.value)}
-                placeholder="Cerca email o file di origine…"
+                placeholder="Cerca email…"
               />
             </div>
             <form onSubmit={handleAddEmail} className="inline-form">
@@ -274,7 +274,6 @@ export function BlacklistPage({
                 <TableHeader>
                   <TableRow>
                     <TableHead>email</TableHead>
-                    <TableHead>file origine</TableHead>
                     <TableHead>data importazione</TableHead>
                     <TableHead>nota</TableHead>
                     <TableHead className="col-actions">azioni</TableHead>
@@ -284,7 +283,6 @@ export function BlacklistPage({
                   {entries.map((entry) => (
                     <TableRow key={entry.email}>
                       <TableCell className="cell-primary">{entry.email}</TableCell>
-                      <TableCell>{entry.source_file}</TableCell>
                       <TableCell>{new Date(entry.imported_at).toLocaleString("it-IT")}</TableCell>
                       <TableCell>{entry.note ?? "—"}</TableCell>
                       <TableCell className="col-actions">

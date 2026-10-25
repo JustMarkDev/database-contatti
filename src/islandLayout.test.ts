@@ -236,13 +236,7 @@ function ruleBodyFor(selector: string, occurrence = 0): string {
   return ruleBody(css, scanCss, selector, occurrence);
 }
 
-const PANEL_CLASSES = [
-  "ai-panel",
-  "blacklist-panel",
-  "settings-panel",
-  "ai-log-panel",
-  "verification-panel",
-] as const;
+const PANEL_CLASSES = ["ai-panel", "blacklist-panel", "settings-panel", "ai-log-panel"] as const;
 
 const FLATTEN_SELECTORS = PANEL_CLASSES.map((panel) => `.content-island > .${panel}`);
 const FLATTEN_CARD_SELECTORS = PANEL_CLASSES.flatMap((panel) => [
