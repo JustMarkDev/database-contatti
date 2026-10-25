@@ -786,6 +786,9 @@ pub mod candidates;
 mod classification_benchmarks;
 mod classification_core;
 pub mod contacts;
+// shortcut: the client is unused until the crawler switches to it (plan phase 2), drop then.
+#[allow(dead_code)]
+mod contextdev;
 pub mod database;
 pub mod database_backup;
 pub mod deterministic_rules;
@@ -873,6 +876,8 @@ pub fn run() {
             tinyfish::get_tinyfish_api_key,
             tinyfish::set_tinyfish_api_key,
             tinyfish::find_seed_urls,
+            contextdev::get_contextdev_api_key,
+            contextdev::set_contextdev_api_key,
             imports::get_filter_options,
             imports::refresh_dashboard,
             imports::delete_contact,

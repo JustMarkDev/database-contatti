@@ -1211,6 +1211,23 @@ describe("App orchestration", () => {
     expect(invoke).toHaveBeenCalledWith("clear_database");
   });
 
+  it("saves the context.dev API key from Settings", async () => {
+    invoke.mockImplementation((command: string) => {
+      if (command === "set_contextdev_api_key")
+        return Promise.resolve({ configured: true, from_env: false });
+      return defaultInvoke(command);
+    });
+    render(<App />);
+    await screen.findByText("info@example.it");
+    await userEvent.click(screen.getByTitle("Impostazioni"));
+    await userEvent.type(await screen.findByLabelText("Chiave API context.dev"), " cd-key ");
+    const form = screen.getByLabelText("Chiave API context.dev").closest("form")!;
+    await userEvent.click(within(form).getByRole("button", { name: "Salva chiave" }));
+    expect(invoke).toHaveBeenCalledWith("set_contextdev_api_key", { apiKey: "cd-key" });
+    expect(await within(form.parentElement!).findByText("Chiave configurata")).toBeInTheDocument();
+    expect(screen.getByLabelText("Chiave API context.dev")).toHaveValue("");
+  });
+
   it("gates blacklist clearing behind two confirmations", async () => {
     invoke.mockImplementation((command: string) => {
       if (command === "refresh_dashboard")

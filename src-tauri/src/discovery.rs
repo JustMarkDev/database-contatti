@@ -589,7 +589,7 @@ pub(crate) fn is_internal_ip(ip: std::net::IpAddr) -> bool {
     }
 }
 
-fn is_internal_host(host: &str) -> bool {
+pub(crate) fn is_internal_host(host: &str) -> bool {
     let host = host.trim_start_matches('[').trim_end_matches(']');
     let lower = host.to_ascii_lowercase();
     lower == "localhost"

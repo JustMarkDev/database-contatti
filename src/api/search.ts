@@ -92,6 +92,11 @@ export const getTinyfishApiKey = () => invoke<TypeSafeKeyView>("get_tinyfish_api
 export const setTinyfishApiKey = (apiKey: string) =>
   invoke<TypeSafeKeyView>("set_tinyfish_api_key", { apiKey });
 
+export const getContextdevApiKey = () => invoke<TypeSafeKeyView>("get_contextdev_api_key");
+
+export const setContextdevApiKey = (apiKey: string) =>
+  invoke<TypeSafeKeyView>("set_contextdev_api_key", { apiKey });
+
 /** TinyFish web search: returns up to ten seed URLs, one per site. */
 export const findSeedUrls = (query: string) => invoke<string[]>("find_seed_urls", { query });
 

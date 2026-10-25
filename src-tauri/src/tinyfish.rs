@@ -19,8 +19,6 @@ const FETCH_URL: &str = "https://api.fetch.tinyfish.ai";
 pub(crate) const FETCH_TIMEOUT: Duration = Duration::from_secs(150);
 const SEARCH_TIMEOUT: Duration = Duration::from_secs(30);
 const MAX_SEED_URLS: usize = 10;
-/// Social and directory sites never hold an institution's own role mailboxes.
-const EXCLUDED_DOMAINS: &str = "facebook.com,instagram.com,youtube.com,linkedin.com,x.com,twitter.com,wikipedia.org,tripadvisor.it,paginegialle.it,paginebianche.it";
 
 fn env_key() -> Option<String> {
     std::env::var(ENV_KEY)
@@ -207,7 +205,10 @@ pub(crate) async fn search(
             ("query", query),
             ("location", "IT"),
             ("language", "it"),
-            ("exclude_domains", EXCLUDED_DOMAINS),
+            (
+                "exclude_domains",
+                &crate::contextdev::EXCLUDED_DOMAINS.join(","),
+            ),
         ])
         .send()
         .await

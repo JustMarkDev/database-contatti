@@ -12,6 +12,7 @@ import { detectOpencode, detectTypesafe, getTypesafeApiKey, setTypesafeApiKey } 
 import { exportDatabaseBackup, importDatabaseBackup } from "../api/backup";
 import { clearBlacklist } from "../api/blacklist";
 import { clearContacts, refreshDashboard } from "../api/contacts";
+import { getContextdevApiKey, setContextdevApiKey } from "../api/search";
 import { Badge } from "../components/ui/badge";
 import { Button } from "../components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "../components/ui/card";
@@ -98,11 +99,58 @@ function ProviderRow({
   );
 }
 
+function ApiKeyForm({
+  label,
+  configured,
+  removable,
+  onSave,
+}: {
+  label: string;
+  configured: boolean;
+  removable: boolean;
+  onSave: (value: string) => Promise<boolean>;
+}) {
+  const [draft, setDraft] = useState("");
+
+  async function save(value: string) {
+    if (await onSave(value)) setDraft("");
+  }
+
+  return (
+    <form
+      className="inline-form"
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save(draft.trim());
+      }}
+    >
+      <Input
+        aria-label={label}
+        type="password"
+        autoComplete="off"
+        value={draft}
+        onChange={(event) => setDraft(event.target.value)}
+        placeholder={
+          configured ? `Sostituisci la ${label[0].toLowerCase()}${label.slice(1)}` : label
+        }
+      />
+      <Button type="submit" disabled={!draft.trim()}>
+        Salva chiave
+      </Button>
+      {removable && (
+        <Button type="button" variant="outline" onClick={() => void save("")}>
+          Rimuovi
+        </Button>
+      )}
+    </form>
+  );
+}
+
 function ProvidersCard({ active }: { active: boolean }) {
   const [opencode, setOpencode] = useState<OpenCodeStatus | null>(null);
   const [typesafe, setTypesafe] = useState<TypeSafeStatus | null>(null);
   const [key, setKey] = useState<TypeSafeKeyView | null>(null);
-  const [draft, setDraft] = useState("");
+  const [contextdevKey, setContextdevKey] = useState<TypeSafeKeyView | null>(null);
   const [loading, setLoading] = useState(true);
   const [prefs, setPrefs] = useState<OpenCodePrefs>(loadOpenCodePrefs);
 
@@ -117,6 +165,7 @@ function ProvidersCard({ active }: { active: boolean }) {
       detectOpencode().then(setOpencode, () => setOpencode(null)),
       detectTypesafe().then(setTypesafe, () => setTypesafe(null)),
       getTypesafeApiKey().then(setKey, () => setKey(null)),
+      getContextdevApiKey().then(setContextdevKey, () => setContextdevKey(null)),
     ]);
     setLoading(false);
   }, []);
@@ -128,11 +177,23 @@ function ProvidersCard({ active }: { active: boolean }) {
   async function saveKey(value: string) {
     try {
       setKey(await setTypesafeApiKey(value));
-      setDraft("");
       setTypesafe(await detectTypesafe());
       toast.success(value ? "Chiave Jev salvata." : "Chiave Jev rimossa.");
+      return true;
     } catch (error) {
       toast.error(String(error));
+      return false;
+    }
+  }
+
+  async function saveContextdevKey(value: string) {
+    try {
+      setContextdevKey(await setContextdevApiKey(value));
+      toast.success(value ? "Chiave context.dev salvata." : "Chiave context.dev rimossa.");
+      return true;
+    } catch (error) {
+      toast.error(String(error));
+      return false;
     }
   }
 
@@ -167,7 +228,8 @@ function ProvidersCard({ active }: { active: boolean }) {
           </Button>
         </CardTitle>
         <CardDescription>
-          Stato dei provider usati per la classificazione. Le chiavi restano sul tuo computer.
+          Stato dei provider usati per la classificazione e la ricerca web. Le chiavi restano sul
+          tuo computer.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -253,32 +315,29 @@ function ProvidersCard({ active }: { active: boolean }) {
               : []
           }
         >
-          <form
-            className="inline-form"
-            onSubmit={(event) => {
-              event.preventDefault();
-              void saveKey(draft.trim());
-            }}
-          >
-            <Input
-              aria-label="Chiave API TypeSafe"
-              type="password"
-              autoComplete="off"
-              value={draft}
-              onChange={(event) => setDraft(event.target.value)}
-              placeholder={
-                key?.configured ? "Sostituisci la chiave API TypeSafe" : "Chiave API TypeSafe"
-              }
-            />
-            <Button type="submit" disabled={!draft.trim()}>
-              Salva chiave
-            </Button>
-            {key?.configured && !key.from_env && (
-              <Button type="button" variant="outline" onClick={() => void saveKey("")}>
-                Rimuovi
-              </Button>
-            )}
-          </form>
+          <ApiKeyForm
+            label="Chiave API TypeSafe"
+            configured={Boolean(key?.configured)}
+            removable={Boolean(key?.configured && !key.from_env)}
+            onSave={saveKey}
+          />
+        </ProviderRow>
+        <ProviderRow
+          name="context.dev (ricerca web)"
+          badges={[
+            {
+              label: contextdevKey?.configured ? "Chiave configurata" : "Chiave mancante",
+              ok: Boolean(contextdevKey?.configured),
+            },
+            ...(contextdevKey?.from_env ? [{ label: "Da CONTEXT_DEV_API_KEY", ok: true }] : []),
+          ]}
+        >
+          <ApiKeyForm
+            label="Chiave API context.dev"
+            configured={Boolean(contextdevKey?.configured)}
+            removable={Boolean(contextdevKey?.configured && !contextdevKey.from_env)}
+            onSave={saveContextdevKey}
+          />
         </ProviderRow>
       </CardContent>
     </Card>

@@ -102,9 +102,10 @@ fn operation_in_progress(db: &Connection) -> Result<Option<&'static str>, String
 
 /// API keys live in `app_settings`. A backup is a file people copy and send around, so
 /// it never carries them; a restore keeps the keys of the database it replaces.
-const SECRET_SETTINGS: [&str; 2] = [
+const SECRET_SETTINGS: [&str; 3] = [
     crate::ai_typesafe::TYPESAFE_SETTINGS_KEY,
     crate::tinyfish::SETTINGS_KEY,
+    crate::contextdev::SETTINGS_KEY,
 ];
 
 fn strip_secrets(path: &Path) -> Result<(), String> {
