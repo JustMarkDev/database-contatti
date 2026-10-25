@@ -24,19 +24,18 @@ i dati applicativi sono conservati in SQLite.
 
 Il database dei contatti rimane sul computer. La classificazione IA invia batch
 di contatti a TypeSafe Jev e, solo per i gap di tassonomia, a OpenCode Muse Spark 1.3.
-Nella pagina **Cerca lead**, se è impostata una chiave TinyFish (campo nella
-pagina oppure variabile `TINYFISH_API_KEY`), **Avvia ricerca** e **Trova siti**
-chiedono a TinyFish i siti a partire dal testo libero o dal nome di un ente, e
-l'esplorazione chiede a TinyFish le pagine che il sito blocca (HTTP 403, 406,
-429, 451, 503 o pagina di verifica anti-bot). Se anche TinyFish non basta, la
-pagina viene letta dalla copia del Wayback Machine (archive.org) o, in mancanza,
-di Common Crawl, che ricevono quindi l'indirizzo della pagina. Con **Usa IA** i link di una pagina e il testo
-vicino agli indirizzi trovati vanno a OpenCode Muse Spark 1.3, eseguito
+Nella pagina **Cerca lead** i siti si leggono e si trovano con
+[context.dev](https://context.dev) (chiave nelle Impostazioni oppure variabile
+`CONTEXT_DEV_API_KEY`): context.dev riceve gli indirizzi delle pagine da leggere,
+i domini dei siti da mappare e il testo delle ricerche web e Google Maps, **mai**
+il database contatti. Si ritiene che context.dev rispetti `robots.txt`, ma non è
+documentato; usa un proprio user-agent, non quello dell'app. Il DPA di
+context.dev va accettato dal titolare. Con **Usa IA** i link di una pagina e il
+testo vicino agli indirizzi trovati vanno a OpenCode Muse Spark 1.3, eseguito
 senza strumenti né permessi: il testo dei siti non può fargli leggere file o
-aprire URL. TinyFish, archive.org, Common Crawl e OpenCode non ricevono mai il database
-contatti; i domini dei contatti diventano siti da esplorare solo quando lo
-chiedi con **Aggiungi dai contatti**. Le pagine escluse da `robots.txt` non
-vengono mai lette, nemmeno tramite TinyFish o archivio.
+aprire URL. La classificazione dei siti nuovi invia titolo, descrizione e
+indirizzo del sito a TypeSafe Jev. I domini dei contatti diventano siti da
+leggere solo quando lo chiedi con **Aggiungi dai contatti**.
 La validazione dei domini esegue invece richieste DNS, che possono essere
 visibili al resolver DNS configurato sul sistema. La verifica caselle, soltanto
 quando avviata esplicitamente, apre connessioni dirette agli MX sulla porta 25:
@@ -58,7 +57,7 @@ deve rispettare il GDPR e le norme sulle comunicazioni commerciali (base
 giuridica, informativa, opposizione). Il software è fornito senza garanzie,
 secondo la licenza MIT.
 
-I backup esportati non contengono le chiavi API (TypeSafe, TinyFish); il ripristino
+I backup esportati non contengono le chiavi API (TypeSafe, context.dev); il ripristino
 conserva quelle del database sostituito. Prima di ripristinare, il database attivo
 viene salvato come `contatti.sqlite3.pre-restore` nella cartella dati.
 
@@ -405,18 +404,14 @@ e aggiungerlo lo cambia. Le regole in caso di valori diversi:
   contatto non ne ha nessuna, e sempre per intero;
 - ente, ufficio, persona, ruolo, sottocategoria e località non vengono mai
   uniti con `|`: un valore già presente resta;
-- i registri ufficiali (scuole MIUR, IndicePA, biblioteche ICCU) invece
-  sostituiscono ente, codice e località; il valore precedente resta nelle
-  **Evidenze** del contatto ("sostituito da indicepa: ente: …");
+- i lead dei registri ufficiali importati in passato (scuole MIUR, IndicePA,
+  biblioteche ICCU) invece sostituiscono ente, codice e località; il valore
+  precedente resta nelle **Evidenze** del contatto ("sostituito da indicepa:
+  ente: …");
 - il sito diverso si aggiunge dopo quello esistente con `|`, come nelle
   altre importazioni;
 - indirizzo e CAP restano nell'area Cerca lead e non vengono copiati nei
-  contatti: servono solo a ricavare comune, provincia e regione quando la
-  fonte non dà un comune riconosciuto (vuoto, una frazione, un quartiere).
-  Prima vale il comune scritto dopo il CAP nell'indirizzo; altrimenti il CAP
-  nella tabella CAP-comuni ISTAT (comuni-json, scaricata solo quando serve):
-  un CAP di un solo comune dà comune, provincia e regione, un CAP condiviso
-  dai comuni di una provincia dà solo provincia e regione.
+  contatti.
 
 I lead non hanno un punteggio: ne ricevono uno quando diventano contatti con
 **Aggiungi al database**, calcolato sul contatto unito, mai copiato dal lead.
@@ -425,67 +420,84 @@ I lead non hanno un punteggio: ne ricevono uno quando diventano contatti con
 quelli dei contatti più ricerca, metodo e stato; **Esporta Mail** scrive le
 caselle PEO filtrate.
 
-La pagina ha due schede, provabili separatamente: **Dati aperti** (dataset
-scaricati e letti direttamente, nessuna visita ai siti) e **Ricerca web**
-(elenchi, siti da esplorare, crawler, TinyFish e IA). Ogni scheda mostra,
-filtra, esporta e aggiunge al database solo i lead delle proprie ricerche.
+Gli importatori di dati aperti (MIUR, IndicePA, ANA, ICCU, OpenStreetMap,
+Wikidata, dati.gov.it) sono stati usati una volta e rimossi: i loro lead e i
+loro siti da leggere restano nell'area di prova.
 
-**Dati aperti** contiene:
+**Cosa vuoi trovare?** accetta una richiesta a parole tue (per esempio «tutte
+le pro loco della Lombardia»): l'IA ne ricava categoria, sottocategoria,
+regione, gli elenchi adatti e una ricerca web; poi l'app esplora quegli
+elenchi, legge i siti già raccolti che corrispondono, cerca siti nuovi sul web
+(una ricerca per ogni provincia della regione, più quella libera) e, se attivo
+nelle Impostazioni, su Google Maps.
 
-- dataset con email in chiaro, importati con **Importa**: Anagrafe scuole
-  statali e paritarie, IndicePA, sezioni e gruppi ANA, Anagrafe delle
-  biblioteche ICCU, OpenStreetMap (luoghi di culto; cultura; municipi, forze
-  dell'ordine e tribunali; scuole; associazioni e circoli; uffici turistici e
-  sanità) e Wikidata (musei, archivi, teatri, cinema; diocesi, parrocchie,
-  chiese, monasteri);
-- **Cataloghi dati.gov.it** (vedi sotto).
+**Usa i siti già pubblici** elenca gli elenchi di enti (sezioni CAI, Caritas
+diocesane, club Rotary dei Distretti 2080, 2071 e 2042, club Lions del
+Distretto 108 Ib1, oratori ambrosiani FOM, pubbliche assistenze ANPAS, Azione
+Cattolica diocesana) e le liste di **siti da leggere**. Un elenco si legge
+seguendo le sue pagine sotto il percorso di partenza (e la paginazione): le
+email diventano lead con la categoria dell'elenco, i link ad altri siti
+diventano candidati.
 
-L'importazione salva tutte le email della fonte, anche quelle già nei
-contatti: nella tabella risultano **Completa il contatto** se portano ente,
-ufficio o località mancanti. Il responsabile dell'ente IndicePA (nome e
-titolo, per esempio il sindaco) e il presidente di sezione ANA diventano
-persona e ruolo delle caselle generali dell'ente o della sezione. Per ANA,
-oltre all'indirizzo mostrato, vale anche quello del link `mailto:` quando è
-diverso, sullo stesso dominio e non è una copia troncata.
+**Come si legge un sito** (context.dev): la home (1 credito), la mappa del
+sito dal sitemap (Map, 1 credito), poi le pagine migliori secondo un punteggio
+locale gratuito per la categoria del sito (parole come `parroco`, `direttivo`,
+`referente bullismo` nell'indirizzo, nel titolo o nel testo del link), fino a
+**Pagine per sito** (3 per impostazione, al massimo 6, la home compresa). Per i
+siti delle scuole si possono leggere fino a 2 PDF di circolari con ruoli. Con
+**Usa IA** il modello sceglie per significato tra i primi candidati e le sue
+scelte passano davanti. Un sito costa quindi al massimo Map + pagine (4 crediti
+con 3 pagine); un sito morto o bloccato al massimo 1. Notizie, calendari, albo,
+privacy, login, feed e paginazione non si leggono mai. Gli indirizzi offuscati
+da Cloudflare vengono decodificati.
 
-Registri senza download né elenco leggibile (RUNTS, annuario parrocchie CEI)
-non compaiono: per le parrocchie i punti di partenza sono le diocesi di
-Wikidata, i luoghi di culto di OpenStreetMap e gli elenchi diocesani.
+**Siti nuovi.** Tutti i canali passano dallo stesso filtro: si scartano i siti
+già noti (in qualunque lista, sito di un contatto o dominio email di un
+contatto), social, portali e provider; il resto viene classificato con le
+regole deterministiche e poi con Jev a lotti. Solo una classificazione sicura
+(confidenza ≥ 0,8) diventa un sito da leggere; il resto resta **da verificare**
+e non si legge. I canali sono:
 
-**Ricerca web** contiene gli elenchi di enti da esplorare con **Esplora
-elenco**: sezioni CAI, Caritas diocesane, club Rotary del Distretto 2080,
-oratori ambrosiani FOM, pubbliche assistenze ANPAS, Azione Cattolica
-diocesana, più qualunque altra pagina elenco indicata a mano con categoria e
-sottocategoria. Il crawler segue le pagine sotto il percorso dell'elenco (e la
-paginazione): le email diventano lead con la categoria dell'elenco, i link ad
-altri siti diventano siti da esplorare.
+- **link in uscita** dalle pagine già lette (una diocesi elenca le parrocchie,
+  un comune le associazioni), senza crediti in più: lista «Scoperta: link in
+  uscita»;
+- **elenchi** (sopra);
+- **ricerca web** (1 credito ogni 10 risultati): lista «Scoperta: ricerca web»;
+- **Google Maps** (spento per impostazione, costo da misurare): lista
+  «Scoperta: Google Maps», con il comune della scheda Maps.
 
-**Cataloghi dati.gov.it** cerca nel catalogo nazionale (che raccoglie anche i
-portali regionali) tabelle CSV o Excel: l'importazione riconosce dalle
-intestazioni le colonne di email, PEC, denominazione, comune, provincia,
-regione, CAP, indirizzo e sito e assegna la categoria scelta.
+Gli enti noti solo per nome e comune aspettano **Trova i siti**: con Google
+Maps attivo si accetta una scheda solo se il comune coincide e il nome è
+simile; altrimenti la ricerca web, accettando un risultato solo se titolo o
+descrizione nominano il comune o una parola significativa del nome. Un sito che
+non passa resta **da verificare**: meglio nessun sito che uno sbagliato, perché
+le email trovate verrebbero attribuite all'ente sbagliato. Altri siti arrivano
+da **Aggiungi dai contatti** (un sito per dominio già presente nei contatti,
+filtrato per categoria, sottocategoria e regione; i domini di provider e
+quelli condivisi da più di tre comuni sono esclusi) o da URL incollati.
 
-Gli enti che una fonte elenca senza email, ma con un sito, diventano **Siti da
-esplorare** nella scheda Ricerca web, raggruppati per elenco; quelli con solo il nome e il comune
-aspettano **Trova siti** (TinyFish, al massimo 30 ricerche al minuto). Altri
-siti arrivano da **Aggiungi dai contatti** (un sito per dominio già presente
-nei contatti, filtrato per categoria, sottocategoria e regione; i domini di
-provider e quelli condivisi da più di tre comuni sono esclusi) o da URL
-incollati. **Esplora** visita i siti in attesa, sei alla volta, ciascuno in
-sequenza: rispetta `robots.txt` (incluso `Crawl-delay`), attende almeno 1,5
-secondi più una variazione casuale tra due richieste, usa la sitemap per
-arrivare subito alle pagine dei referenti e, se il sito chiede di rallentare,
-attende il tempo indicato da `Retry-After` prima di riprovare una volta. Un
-sito che blocca o limita le richieste passa a TinyFish e poi alla copia in
-archivio (Wayback Machine, poi Common Crawl). Un sito esplorato non viene riesplorato per 30 giorni, anche da un
-altro elenco. Gli indirizzi del sito stesso (o una casella webmail pubblicata
-sul sito) ereditano ente, categoria e località del sito; con **Usa IA** il
-modello sceglie le pagine da visitare e legge ufficio, ruolo, persona, comune e
-categoria dal testo vicino a ogni indirizzo, e negli elenchi il nome e il comune
-di ogni ente. Le risposte del modello sono accettate solo se riguardano link e
-indirizzi presenti nella pagina e voci della tassonomia. I lead di ogni sito
-sono salvati appena il sito è finito: **Ferma esplorazione** conserva quelli
-già trovati.
+**Crediti.** Prima di partire l'app legge saldo, rinnovo e Auto-Topup con
+`GET /org/usage` (gratis) e rifiuta di partire se il saldo è alla **riserva**
+(100 per impostazione) o se Auto-Topup è attivo senza budget mensile: disattiva
+il rinnovo automatico o imposta un budget nel pannello context.dev prima di
+spendere crediti. Ogni ricerca si ferma al **tetto per ricerca** delle
+Impostazioni (500 per impostazione) e mostra prima «≈ N siti, ≈ X crediti».
+Se i crediti finiscono (402), la chiave è rifiutata o tre richieste di fila
+sono respinte, la ricerca si ferma; i siti non letti restano da leggere e
+basta rilanciarla. Nelle Impostazioni scegli anche il piano (richieste in
+parallelo: Free 2, Developer 10, Pro 100). La scheda **Resa delle fonti di siti
+nuovi** mostra per ogni canale i crediti spesi per trovare e leggere i siti e
+le email nuove trovate. Il budget mensile di 100 € per l'IA non comprende
+context.dev.
+
+Un sito letto non viene riletto per 30 giorni, anche da un altro elenco. Gli
+indirizzi del sito stesso (o una casella webmail pubblicata sul sito)
+ereditano ente, categoria e località del sito; con **Usa IA** il modello legge
+ufficio, ruolo, persona, comune e categoria dal testo vicino a ogni indirizzo,
+e negli elenchi il nome e il comune di ogni ente. Le risposte del modello sono
+accettate solo se riguardano link e indirizzi presenti nella pagina e voci
+della tassonomia. I lead di ogni sito sono salvati appena il sito è finito:
+**Ferma esplorazione** conserva quelli già trovati.
 
 ### Classificazione IA
 

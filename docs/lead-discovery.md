@@ -1,6 +1,6 @@
 # Lead discovery — discussion notes
 
-Status: pre-implementation, open questions. Last updated 2026-09-22.
+Status: shipped. Since 2026-10-25 every page is read and every new site is found through context.dev (§20); sections marked _Superseded_ record the earlier design. Last updated 2026-10-25.
 
 ## 1. Goal
 
@@ -18,6 +18,8 @@ Core value hypothesis: a personal teacher address in plain text tied to a role (
 - Budget cap: ~100 EUR/month combined for System One (Jev/TypeSafe) + System Two (reasoning agent, e.g. Muse Spark 1.3 via OpenCode subscription).
 
 ## 3. Sources (no scraping first)
+
+_Superseded 2026-10-25:_ the open data below (MIUR, IndicePA, ANA, ICCU, OSM, Wikidata, dati.gov.it) was imported once and the importers are removed; their leads and seeds stay in the sandbox. New sites now come from the discovery channels of §20.
 
 1. **Current DB rescore:** reuse existing contacts + `contact_sources`. Add Jev lead-quality score so old generic addresses rank lower than role-specific ones.
 2. **MIUR Open Data Anagrafe Scuole:** bulk CSV/JSON per school year, IODL 2.0. Fields: `IndirizzoEmailScuola`, `IndirizzoPecScuola`, `SitoWebScuola`, codice meccanografico, denominazione. Statali + paritarie. Free, versioned, no bot issues.
@@ -72,6 +74,8 @@ Remaining for v1 scope: experiment seed list, score v0 weights, export `.txt` co
 
 ## 10. PDF extraction live (2026-09-23)
 
+_Superseded 2026-10-25:_ PDFs are read by context.dev Scrape as Markdown with OCR off, only for Istruzione seeds and only when the link names a role or a circolare (0 by default, at most 2 per site). The local extractor, `lopdf` and `flate2` are removed.
+
 `pdf-extract` 0.12.1 (MIT, pure Rust, no system deps) added to `src-tauri/Cargo.toml` with user approval. Circolari PDFs are fetched under a per-domain budget (default 20, 8 MB cap, magic check, 1.5s pacing shared with HTML), text-extracted locally, and ingested through the normal email/score path with the PDF URL as source. Image-only scans are skipped as non-fatal errors. Live smoke on the 3 Lombardia seeds: 50 documents (39 HTML + 11 PDF), 13 leads (was 10 HTML-only), 12 PDFs linked, 1 scan-only skipped, 1 hard 403, no throttling.
 
 ### PDF extractor replaced (2026-09-25)
@@ -79,6 +83,8 @@ Remaining for v1 scope: experiment seed list, score v0 weights, export `.txt` co
 `pdf-extract` pulled in `ttf-parser` (RUSTSEC-2026-0192, unmaintained) through `lopdf` 0.42. Text is now extracted by `discovery::pdf_text` on top of `lopdf` 0.45 (MIT, default features off), which no longer depends on `ttf-parser` or `rand`. `lopdf`'s own `extract_text` split addresses drawn in styled or kerned pieces, so `pdf_text` lays text out from glyph positions (simple-font `/Widths`, average width for composite fonts), follows form XObjects (stamped/registered documents), skips pages that fail to decode and bounds every stream at 64 MB decompressed. On 12 public school circolari it extracted the same emails, roles and person names as `pdf-extract`, 2–4× faster; it drops 8 crates from the lockfile.
 
 ## 11. Crawl politeness live (2026-09-23)
+
+_Superseded 2026-10-25:_ the local `robots.txt` check, pauses, `Crawl-delay`, `Retry-After` handling, the polite client and the direct sitemap fetch are removed. We assume context.dev respects `robots.txt` (not documented; to be confirmed with support@context.dev). If it does not, restore `discovery/robots.rs` from git.
 
 Before touching a host the crawler reads its `robots.txt` (RFC 9309). It uses the `DatabaseContatti` group if one exists, otherwise `*`, with `*` / `$` patterns and longest-match-wins. A 4xx `robots.txt` means crawl freely. A 5xx, 429 or unreachable one skips the host. `Crawl-delay` raises the 1.5s pause, and a host asking for more than 30s is skipped.
 
@@ -89,6 +95,8 @@ Throttle answers (429, 503, 509) wait for `Retry-After` (seconds or HTTP-date, d
 Live smoke after the change, same 3 Lombardia seeds: 55 documents (was 50), 15 leads (was 13), 20 PDFs, the same single 403, 234s.
 
 ## 12. Next: open sources first, search on top (planned)
+
+_Superseded 2026-10-25:_ search runs through context.dev (§20); TinyFish is removed.
 
 Target flow: free-form request ("tutti i referenti bullismo d'Italia") -> Jev maps it to role + geography -> bulk open data gives every matching school with its site and geography -> discovery finds role emails per school -> TinyFish Search fills schools where the site or sitemap has no role page.
 
@@ -105,34 +113,21 @@ Live run: statali 49,395 rows to 7,707 leads in 3s, paritarie 15,466 to 10,615 i
 
 Measured against the current contacts DB, the three sources hold 156,164 unique addresses (99,468 PEO). 44,285 PEO are not in the DB yet: 32,764 public administration (21,230 comuni), 5,993 schools, 2,921 health, 241 culture. IndicePA office heads add 53,631 addresses, 27,843 new, almost all `nome.cognome`.
 
-## 14. Search and fetch providers (2026-09-23)
+## 14. Search and fetch providers (2026-09-23, revised 2026-10-25)
 
-Everything must run unattended for days, so a browser per page is out. Our reqwest crawler stays the primary fetcher: no cost, no quota, polite by design.
-
-| Provider                         | Free limit                              | Use                                                                              |
-| -------------------------------- | --------------------------------------- | -------------------------------------------------------------------------------- |
-| TinyFish Search                  | 30/min                                  | Primary search. Highest free limit found.                                        |
-| TinyFish Fetch                   | 150/min                                 | Only for pages that need JavaScript.                                             |
-| Jina Reader                      | 20 RPM keyless, 500 RPM with free key   | Fallback for JavaScript pages.                                                   |
-| Exa / Tavily                     | about 1,000 per month                   | Search fallback only.                                                            |
-| Common Crawl                     | CDX index rate-limited, WARC under 10/s | Fallback for hosts that block us. Never touches the site, but monthly snapshots. |
-| Brave Search                     | no free plan, card required             | Skip.                                                                            |
-| Google Custom Search             | closed to new users, ends 2027          | Skip.                                                                            |
-| SearXNG                          | self-hosted, upstream engines block it  | Skip.                                                                            |
-| Firecrawl / Crawl4AI self-hosted | free                                    | Skip. They run Playwright, which is the browser we want to avoid.                |
+The reqwest crawler, TinyFish, the Wayback Machine and Common Crawl are replaced by context.dev, one paid API for reading pages (Scrape, HTML), listing a site's URLs (Map, from its sitemap), web search and the Google Maps parser. Extracting leads stays local and free: `parse_page`, `ingest_page`, `host_leads` and the optional OpenCode `LeadAi`. context.dev's own `json`, Answers and Extract outputs would cost more than three times as much and duplicate the model we already pay for.
 
 ## 15. TinyFish wired in (2026-09-23)
 
-`tinyfish.rs` holds both calls. The key lives in `app_settings` (`tinyfish_api_key`) or `TINYFISH_API_KEY`, and without it nothing changes.
-
-- **Trova siti** sends the request text to Search (`location=IT`, `language=it`, social and directory domains excluded) and fills the seed box with up to 10 URLs, one per host. The user reviews them before crawling.
-- During a crawl, a robots-allowed page that answers 403, 406 or 451 is fetched once through Fetch (`format=html`) and parsed like any other page. The run's error list notes each page read this way. Throttling (429/503) still waits for `Retry-After`, and robots.txt exclusions are never routed through TinyFish.
+_Superseded 2026-10-25:_ `tinyfish.rs`, its commands and the TinyFish dev tooling are removed. Migration 66 deletes the stored `tinyfish_api_key`, which is no longer listed among the secrets kept out of backups.
 
 ## 16. Open questions from the field audit (2026-09-23)
 
 - PEC: a single `is_pec` 0/1 flag. An address is PEC when its pattern matches (`@pec.`, legalmail, …) or when any MX host in `domain_verification_cache` belongs to a known PEC provider (Aruba PEC, Legalmail, Actalis, Poste, Telecom, Asme, …). Plain `mx.aruba.it` is ordinary mail. Migration 53 promotes the missed rows and drops `email_kind`, which had produced "standard | pec" merges.
 
 ## 17. Source field mapping, ANA importer, cleanup (2026-09-23)
+
+_Partly superseded 2026-10-25:_ the ANA importer is removed with the other importers. The migrations, columns and promotion rules below stay.
 
 - Migration 50 adds `search_leads.official_code` and `department`, with the same meaning as the `contacts` columns, so a later promotion copies fields one to one. MIUR sets `official_code` to CODICESCUOLA. IndicePA uses `cod_amm` for organization mailboxes and `cod_uni_ou` for offices. An office mailbox has `department = des_ou` and no role. `mail_resp` gets role "Responsabile", the office as department, and the head's name only when the local part contains a name token. Not stored yet: `titolo_resp`, `cod_ou_padre`, phone, social links.
 - ANA: two REST pages, one text line per table cell, then a walk over the lines, which also handles Milano's nested layout. Section mailbox: organization "Sezione ANA X", comune from the address CAP. Group mailbox: department "Gruppo Y", comune only when the group or address town is a municipality of the section's region, otherwise region only. Foreign sections get no geography. Live: 117 sections, 4,509 leads (2,481 with comune), in 2 requests. 272 are not in contacts. Crawling the 133 section and group websites was tried (393 pages, 183 more addresses, 16 minutes) and left out for now: the crawl attributes every address on a site to the section, including third parties.
@@ -150,8 +145,22 @@ Everything must run unattended for days, so a browser per page is out. Our reqwe
 
 ## 18. dati.gov.it as one-click sources (2026-10-05)
 
-The manual dati.gov.it search is gone. Six catalog entries (`ckan-turismo`, `ckan-associazioni`, `ckan-cultura`, `ckan-sanita`, `ckan-formazione`, `ckan-pa`) import hand-picked tables from the national catalog, one click per taxonomy category. `ckan_bundle` in `lead_sources.rs` lists, per table, the CKAN dataset name, the publisher's region (used when the table has no region column) and the subcategory. The resource URLs come from one `package_search` per source (dati.gov.it answers 502 under bursts, so it gets one call per source, with retries), so a republished file keeps working; a table that fails is skipped and the import fails only if nothing came in. Check that every pinned table still downloads: `cargo test --manifest-path src-tauri/Cargo.toml lead_sources_live_ckan_tables -- --ignored --nocapture`. Left out on purpose: Sicilian `strutture-sanitarie` (private doctors' practices under personal names), the Lazio cultural institutes file (HTTP 500), hotels, and anything about parishes (dati.gov.it has none, OSM and Wikidata cover them).
+_Superseded 2026-10-25:_ the dati.gov.it bundles are removed with the other importers.
 
 ## 19. Free-form request (2026-10-06)
 
-The "Cosa vuoi trovare?" box sends the text to `plan_lead_request`: the model returns category, subcategory, region, catalog source ids and a web query, each checked against the taxonomy, `REGIONS` and the catalog (`parse_plan`). The page then imports or explores the chosen sources, reads the already collected sites that match category, subcategory and region (`ExploreRequest` filters), and runs the TinyFish search when a key is set. A step that fails is reported and the others go on. "Importa tutto" in Dati aperti imports every registry that publishes emails.
+The "Cosa vuoi trovare?" box sends the text to `plan_lead_request`: the model returns category, subcategory, region, directory ids and a web query, each checked against the taxonomy, `REGIONS` and the directories (`parse_plan`). The page then explores the chosen directories, reads the already collected sites that match category, subcategory and region (`ExploreRequest` filters), runs the web search discovery (and Google Maps when enabled) and reads the new sites it accepted. A step that fails is reported and the others go on.
+
+## 20. context.dev (2026-10-25)
+
+**Reading a site** (`discovery::crawl_host`): Scrape the home as HTML (1 credit). If it redirects to another host, that host becomes the site; a redirect to a social network or portal stops there. Map the site (`maxLinks=1000`, no `search`; with `urlRegex` when the seed has a path such as `wixsite.com/nome`). Candidates are the home links plus the Map URLs on the same host, minus noise (news, calendars, albo, privacy, login, feeds, tags, pagination, files). A free local score per seed category (keywords in the URL count most, then in the link text or Map title and description; deep paths and query strings lose points) picks the pages; with Usa IA, `choose_links` picks by meaning among the first 40 and goes first. Up to N-1 pages are read (N = pages per site, default 3, max 6); pages with no keyword are never read on their own. Cost: Map 1 + home 1 + (N-1), so 4 with N = 3; a dead or blocked site costs at most 1. Map failing or returning only the home falls back to the home links.
+
+**Client** (`contextdev.rs`): one semaphore counts every request in flight (Free 2, Developer 10, Pro 100; a 429 above it is immediate). 429 waits `Retry-After` (max 2 retries), 408/5xx/`INTERNAL_ERROR` back off (max 2), `WEBSITE_BLOCKED` retries once, `NOT_FOUND` never. The client stops itself on 402, a rejected key, three 400s in a row or the job's credit cap; a seed that fails for those reasons stays `pending` instead of `failed`. Internal hosts and non-http URLs are never sent (a 400 can disable a Free key). The final URL after redirects is the Scrape response's top-level `url` (the schema has no `metadata.finalUrl`).
+
+**Budget**: every job reads `GET /org/usage` (free) and refuses to start at the reserve (default 100) or with Auto-Topup on and no monthly budget. The cap is the smallest of balance minus reserve, the per-run cap of Settings (default 500) and the request's own. Runs and seeds record `credits_used` (migration 66). The 100 EUR monthly AI budget of §2 does not include context.dev.
+
+**New sites** (`lead_candidates.rs`): every channel hands its sites to `accept_candidates`. Known sites (any seed list, a contact's site or email domain, or a parent domain of those), social networks, portals and providers are dropped. A directory's own taxonomy counts as known; otherwise the deterministic rules classify, then Jev in batches without escalation. A confident classification (>= 0.8) becomes a `pending` seed, the rest is stored as `verifica` and never read. Channels and their lists: links out of every page read (`Scoperta: link in uscita`, no extra credit, at most 40 per site), directories (`Elenco: …`), web search (`Scoperta: ricerca web`, the free query plus `{sottocategoria} {provincia}` for each province of the region) and Google Maps (`Scoperta: Google Maps`, off by default). Each discovery is a `discovery` run with its credits; the page shows credits per new address for each channel.
+
+**Organizations known only by name** (`find_seed_sites`): Google Maps when enabled (the place's city must be the comune and the names must share a significant word), otherwise web search (title or description must name the comune or a significant word of the name). A site that does not pass waits as `verifica`, because a wrong site would attribute right addresses to the wrong organization.
+
+**Phase 0 spike**: `contextdev_live_spike` (ignored test) measures credits per site, recall against known addresses, Map with and without `search`, deep pages, html vs markdown and cache cost, and the discovery channels, under a hard cap of 500 credits. Its Go thresholds (<= 4 credits per site, right pages in 8 of 10 manual checks, Maps precision >= 80% at <= 1.5 credits per valid site) decide which defaults to change.
