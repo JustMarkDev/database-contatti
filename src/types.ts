@@ -150,23 +150,19 @@ export type SearchLeadView = {
   /** `nuovo`, `completa` (promotion fills empty contact fields) or `nel_database`. */
   stato: "nuovo" | "completa" | "nel_database";
 };
-export type LeadSource = {
+export type LeadDirectory = {
   id: string;
   name: string;
   publisher: string;
   landing_url: string;
-  license: string;
-  coverage: string[];
-  emails: "si" | "parziale" | "no";
-  importable: boolean;
+  /** Taxonomy the directory's leads and seeds inherit. */
+  category: string;
+  subcategory: string;
   note: string;
-  kind: "dataset" | "directory";
-  category: string | null;
-  subcategory: string | null;
 };
 export type LeadFilters = {
   query: string;
-  /** Run kinds: `source` (Dati aperti) or `web`, `directory`, `crawl` (Ricerca web). */
+  /** Run kinds: `web`, `directory`, `crawl`, `discovery` (`source`: older open-data imports). */
   kind: FieldFilter;
   run: FieldFilter;
   category: FieldFilter;

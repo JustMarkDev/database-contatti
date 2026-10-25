@@ -24,7 +24,6 @@ use std::hash::{Hash, Hasher};
 use std::io::Write;
 use std::path::Path;
 use std::sync::LazyLock;
-use std::time::Duration;
 
 mod store;
 
@@ -37,7 +36,6 @@ pub(crate) const DEFAULT_MAX_PAGES_PER_DOMAIN: i64 = 3;
 /// PDFs per site, read only for Istruzione seeds (circolari with roles).
 pub(crate) const MAX_PDF_LINKS: i64 = 2;
 pub(crate) const DEFAULT_MAX_PDFS: i64 = 0;
-const USER_AGENT: &str = "DatabaseContatti/0.1 (+https://github.com/JustMarkDev/database-contatti)";
 const MAX_HOST_ERRORS: usize = 3;
 /// Candidates the model may choose from, best local score first.
 const MAX_AI_CANDIDATES: usize = 40;
@@ -175,6 +173,7 @@ impl LeadContext {
 }
 
 impl LeadAccumulator {
+    #[cfg(test)]
     pub(crate) fn from_source(
         email: String,
         is_pec: bool,
@@ -217,14 +216,11 @@ impl LeadAccumulator {
 
 /// Run-level fields of a `search_runs` row.
 pub(crate) struct RunRecord<'a> {
-    /// `web`, `source`, `directory` or `crawl`.
+    /// `web`, `source` (older runs), `directory`, `crawl` or `discovery`.
     pub(crate) kind: &'a str,
     pub(crate) query_text: &'a str,
     pub(crate) source_id: Option<&'a str>,
     pub(crate) seed_count: i64,
-    pub(crate) page_count: i64,
-    pub(crate) pdf_found: i64,
-    pub(crate) errors: &'a [String],
     pub(crate) now: &'a str,
 }
 
@@ -674,71 +670,6 @@ pub(crate) fn is_internal_host(host: &str) -> bool {
         || lower.ends_with(".local")
         || lower.ends_with(".internal")
         || host.parse().is_ok_and(is_internal_ip)
-}
-
-/// Client for fixed public data sources: redirects never lead into the local network.
-pub(crate) fn polite_client(timeout: Duration) -> reqwest::Result<reqwest::Client> {
-    let policy = reqwest::redirect::Policy::custom(move |attempt| {
-        if attempt.previous().len() >= 10 {
-            return attempt.error("troppi reindirizzamenti");
-        }
-        let target = attempt.url().host_str().unwrap_or_default().to_owned();
-        if is_internal_host(&target) {
-            return attempt.stop();
-        }
-        attempt.follow()
-    });
-    reqwest::Client::builder()
-        .timeout(timeout)
-        .user_agent(USER_AGENT)
-        .pool_max_idle_per_host(1)
-        .redirect(policy)
-        .build()
-}
-
-pub(crate) async fn read_text(response: reqwest::Response, max: usize) -> Result<String, String> {
-    let body = read_limited(response, max).await?;
-    Ok(String::from_utf8_lossy(&body).into_owned())
-}
-
-/// Reads at most `max` bytes. `Content-Length` is only a hint (chunked replies
-/// have none), so the body is cut off while streaming.
-pub(crate) async fn read_limited(
-    mut response: reqwest::Response,
-    max: usize,
-) -> Result<Vec<u8>, String> {
-    const TOO_BIG: &str = "contenuto troppo grande";
-    if response
-        .content_length()
-        .is_some_and(|length| length > max as u64)
-    {
-        return Err(TOO_BIG.to_owned());
-    }
-    let mut body = Vec::new();
-    while let Some(chunk) = response.chunk().await.map_err(|error| error.to_string())? {
-        if body.len() + chunk.len() > max {
-            return Err(TOO_BIG.to_owned());
-        }
-        body.extend_from_slice(&chunk);
-    }
-    Ok(body)
-}
-
-/// The response of a successful GET, or `HTTP <status>`.
-pub(crate) async fn get_ok(
-    client: &reqwest::Client,
-    url: &str,
-) -> Result<reqwest::Response, String> {
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|error| error.to_string())?;
-    if response.status().is_success() {
-        Ok(response)
-    } else {
-        Err(format!("HTTP {}", response.status().as_u16()))
-    }
 }
 
 /// Crawl state of one host.
@@ -1328,26 +1259,6 @@ pub(crate) async fn promote_search_leads(
 mod tests {
     use super::*;
 
-    fn serve_once(reply: &'static str) -> (String, std::thread::JoinHandle<()>) {
-        use std::io::{Read, Write};
-        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
-        let address = format!("http://{}/", listener.local_addr().unwrap());
-        let handle = std::thread::spawn(move || {
-            let (mut stream, _) = listener.accept().unwrap();
-            let mut request = [0_u8; 1024];
-            let _ = stream.read(&mut request);
-            let _ = stream.write_all(reply.as_bytes());
-            // A chunked body that never ends: the reader must give up on its own.
-            if reply.contains("chunked") {
-                while stream.write_all(b"400\r\n").is_ok()
-                    && stream.write_all(&[b'x'; 1024]).is_ok()
-                    && stream.write_all(b"\r\n").is_ok()
-                {}
-            }
-        });
-        (address, handle)
-    }
-
     #[test]
     fn internal_addresses_are_recognised() {
         for host in [
@@ -1367,28 +1278,6 @@ mod tests {
         for host in ["93.184.216.34", "2606:2800:220:1::1", "example.it"] {
             assert!(!is_internal_host(host), "{host}");
         }
-    }
-
-    #[tokio::test]
-    async fn endless_chunked_body_is_cut_at_the_limit() {
-        let (url, server) = serve_once("HTTP/1.1 200 OK\r\nTransfer-Encoding: chunked\r\n\r\n");
-        let client = polite_client(Duration::from_secs(10)).unwrap();
-        let response = get_ok(&client, &url).await.unwrap();
-        assert!(read_limited(response, 10_000).await.is_err());
-        // Not joined: the connection is closed by a task on this runtime, and the
-        // server thread stops once that happens.
-        drop(server);
-    }
-
-    #[tokio::test]
-    async fn redirect_into_the_local_network_is_not_followed() {
-        let (url, server) = serve_once(
-            "HTTP/1.1 302 Found\r\nLocation: http://127.0.0.1:9/secret\r\nContent-Length: 0\r\n\r\n",
-        );
-        let client = polite_client(Duration::from_secs(10)).unwrap();
-        let error = get_ok(&client, &url).await.unwrap_err();
-        assert_eq!(error, "HTTP 302");
-        let _ = server.join();
     }
 
     /// Locks the discovery result contract: the frontend consumes serde's

@@ -16,7 +16,7 @@ use crate::discovery::{
     crawl_host, create_run, finish_run, html_to_text, page_anchors, parse_page, url_host,
 };
 use crate::lead_ai::LeadAi;
-use crate::lead_sources::Geography;
+use crate::lead_directories::{DIRECTORIES, Geography};
 use crate::{SearchRunSummary, open_db};
 use futures::StreamExt;
 use rusqlite::{Connection, params};
@@ -672,9 +672,6 @@ pub(crate) async fn crawl_urls(
                 query_text: &label,
                 source_id: source_id.as_deref(),
                 seed_count: total as i64,
-                page_count: 0,
-                pdf_found: 0,
-                errors: &[],
                 now: &setup_now,
             },
             "running",
@@ -924,10 +921,9 @@ pub(crate) async fn plan_lead_request(
     let taxonomy =
         crate::database::blocking(move || crate::lead_ai::load_taxonomy(&*open_db(&app)?)).await?;
     let ai = LeadAi::new(taxonomy).map_err(|error| format!("IA non disponibile: {error}"))?;
-    let sources: Vec<_> = crate::lead_sources::CATALOG
+    let sources: Vec<_> = DIRECTORIES
         .iter()
-        .filter(|source| source.kind == "directory")
-        .map(|source| (source.id, source.name, source.note))
+        .map(|entry| (entry.id, entry.name, entry.note))
         .collect();
     ai.plan_request(&request, &sources).await
 }
@@ -1205,9 +1201,9 @@ pub(crate) async fn explore_directory(
     request: DirectoryRequest,
 ) -> Result<SearchRunSummary, String> {
     let catalog = clean(request.source_id.clone()).map(|id| {
-        crate::lead_sources::CATALOG
+        DIRECTORIES
             .iter()
-            .find(|source| source.id == id && source.kind == "directory")
+            .find(|entry| entry.id == id)
             .ok_or_else(|| format!("Elenco sconosciuto: {id}"))
     });
     let catalog = catalog.transpose()?;
@@ -1215,8 +1211,8 @@ pub(crate) async fn explore_directory(
         Some(source) => (
             source.landing_url.to_owned(),
             source.name.to_owned(),
-            source.category.map(str::to_owned),
-            source.subcategory.map(str::to_owned),
+            Some(source.category.to_owned()),
+            Some(source.subcategory.to_owned()),
         ),
         None => {
             let url = request

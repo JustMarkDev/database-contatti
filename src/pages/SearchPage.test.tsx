@@ -1,8 +1,8 @@
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import type { LeadSource, SearchLeadList, SearchLeadView } from "../types";
-import { formatMethod, LEAD_COLUMNS, SearchPage, tabFilters } from "./SearchPage";
+import type { LeadDirectory, SearchLeadList, SearchLeadView } from "../types";
+import { emptyLeadFilters, formatMethod, LEAD_COLUMNS, SearchPage } from "./SearchPage";
 
 const {
   invoke,
@@ -110,26 +110,16 @@ function deferred<T>() {
   return { promise, resolve };
 }
 
-const source = (overrides: Partial<LeadSource>): LeadSource => ({
-  id: "x",
-  name: "x",
-  publisher: "Editore",
-  landing_url: "https://example.test/",
-  license: "CC0",
-  coverage: [],
-  emails: "si",
-  importable: true,
-  note: "",
-  kind: "dataset",
-  category: null,
-  subcategory: null,
-  ...overrides,
-});
-
-const catalog: LeadSource[] = [
-  source({ id: "dir-cai", name: "CAI sezioni", kind: "directory", category: "Associazioni" }),
-  source({ id: "miur-statali", name: "Scuole statali" }),
-  source({ id: "wikidata-religiosi", name: "Wikidata diocesi", emails: "no" }),
+const catalog: LeadDirectory[] = [
+  {
+    id: "dir-cai",
+    name: "CAI sezioni",
+    publisher: "Club Alpino Italiano",
+    landing_url: "https://www.cai.example.test/sezioni/",
+    category: "Associazioni",
+    subcategory: "CAI",
+    note: "Elenco per regione",
+  },
 ];
 
 const high = makeLead("high");
@@ -171,7 +161,7 @@ function defaultInvoke(command: string): Promise<unknown> {
         to_verify: 0,
         credits: 1,
       });
-    case "list_lead_sources":
+    case "list_lead_directories":
       return Promise.resolve(catalog);
     case "list_lead_taxonomy":
       return Promise.resolve([
@@ -214,8 +204,6 @@ function defaultInvoke(command: string): Promise<unknown> {
         pec: [],
         stato: [],
       });
-    case "import_lead_source":
-      return Promise.resolve({ ...run, run_id: "run-src", page_count: 0 });
     case "explore_seeds":
     case "explore_directory":
       return Promise.resolve(run);
@@ -228,12 +216,9 @@ function defaultInvoke(command: string): Promise<unknown> {
   }
 }
 
-async function renderPage(tab: "Dati aperti" | "Ricerca web" = "Dati aperti") {
+async function renderPage() {
   render(<SearchPage active={true} onContactsChanged={onContactsChanged} />);
   await screen.findAllByText("high@example.test");
-  if (tab === "Ricerca web") {
-    await userEvent.click(screen.getByRole("tab", { name: /Ricerca web/ }));
-  }
 }
 
 afterEach(() => {
@@ -281,7 +266,7 @@ describe("SearchPage", () => {
     render(<SearchPage active={true} onContactsChanged={onContactsChanged} />);
     await screen.findByText("IC Esempio · Segreteria");
     expect(invoke).toHaveBeenCalledWith("list_search_leads", {
-      filters: tabFilters("open"),
+      filters: emptyLeadFilters(),
       limit: 100,
       offset: 0,
     });
@@ -304,39 +289,12 @@ describe("SearchPage", () => {
     expect(within(origin).getByText("Archivio web + IA")).toBeInTheDocument();
   });
 
-  it("imports a dataset and narrows the table to that run", async () => {
-    await renderPage();
-    const names = screen
-      .getAllByRole("listitem")
-      .map((item) => item.textContent ?? "")
-      .filter((text) => text.includes("Editore"));
-    expect(names).toHaveLength(1);
-    expect(names[0]).toContain("Scuole statali");
-    expect(names.join()).not.toContain("CAI sezioni");
-    expect(screen.queryByLabelText("Descrizione della ricerca lead")).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Importa Scuole statali" }));
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("import_lead_source", { sourceId: "miur-statali" }),
-    );
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("list_search_leads", {
-        filters: { ...tabFilters("open"), run: { include: ["run-src"], exclude: [] } },
-        limit: 100,
-        offset: 0,
-      }),
-    );
-    expect(toastSuccess).toHaveBeenCalledWith("Scuole statali: 2 lead");
-  });
-
   it("reads the chosen public sites with the IA, chaining each list's sites", async () => {
-    await renderPage("Ricerca web");
+    await renderPage();
     const start = screen.getByRole("button", { name: "Leggi i siti scelti" });
     expect(start).toBeDisabled();
     await userEvent.click(
       within(screen.getByText("CAI sezioni").closest("li")!).getByRole("checkbox"),
-    );
-    await userEvent.click(
-      within(screen.getByText("Wikidata diocesi").closest("li")!).getByRole("checkbox"),
     );
     await userEvent.click(
       within(screen.getByText("Fonte: OSM").closest("li")!).getByRole("checkbox"),
@@ -344,29 +302,27 @@ describe("SearchPage", () => {
     await userEvent.click(start);
     const exploreCalls = () =>
       invoke.mock.calls.filter(([command]) => command === "explore_seeds").map(([, args]) => args);
-    await waitFor(() => expect(exploreCalls()).toHaveLength(3));
+    await waitFor(() => expect(exploreCalls()).toHaveLength(2));
     expect(invoke).toHaveBeenCalledWith("explore_directory", {
       request: { sourceId: "dir-cai", useAi: true },
     });
-    expect(invoke).toHaveBeenCalledWith("import_lead_source", { sourceId: "wikidata-religiosi" });
     const base = { limit: 50, maxPages: 3, maxPdfs: 0, useAi: true };
     expect(confirmDialog).toHaveBeenCalledWith(
       expect.objectContaining({
-        description: expect.stringContaining("≈ 9 siti, al massimo ≈ 36 crediti"),
+        description: expect.stringContaining("≈ 6 siti, al massimo ≈ 24 crediti"),
       }),
     );
     expect(invoke).toHaveBeenCalledWith("estimate_explore", {
       request: { ...base, listName: "Fonte: OSM" },
     });
     expect(exploreCalls()).toEqual([
-      { request: { ...base, listName: "Fonte: Wikidata diocesi" } },
       { request: { ...base, listName: "Elenco: CAI sezioni" } },
       { request: { ...base, listName: "Fonte: OSM" } },
     ]);
   });
 
   it("reads nothing when the estimate is declined, and uses the chosen pages per site", async () => {
-    await renderPage("Ricerca web");
+    await renderPage();
     await userEvent.selectOptions(screen.getByLabelText("Pagine per sito"), "5");
     await userEvent.click(
       within(screen.getByText("Fonte: OSM").closest("li")!).getByRole("checkbox"),
@@ -381,7 +337,7 @@ describe("SearchPage", () => {
   });
 
   it("shows the credits per new address of each discovery channel", async () => {
-    await renderPage("Ricerca web");
+    await renderPage();
     const table = await screen.findByRole("table", { name: "Resa per fonte" });
     const cells = within(table)
       .getAllByRole("cell")
@@ -393,7 +349,7 @@ describe("SearchPage", () => {
     invoke.mockImplementation((command: string) =>
       command === "explore_directory" ? Promise.reject("HTTP 500") : defaultInvoke(command),
     );
-    await renderPage("Ricerca web");
+    await renderPage();
     await userEvent.click(
       within(screen.getByText("CAI sezioni").closest("li")!).getByRole("checkbox"),
     );
@@ -412,7 +368,7 @@ describe("SearchPage", () => {
     invoke.mockImplementation((command: string) =>
       command === "explore_seeds" ? pending.promise : defaultInvoke(command),
     );
-    await renderPage("Ricerca web");
+    await renderPage();
     await userEvent.click(
       within(screen.getByText("Fonte: OSM").closest("li")!).getByRole("checkbox"),
     );
@@ -448,15 +404,15 @@ describe("SearchPage", () => {
     category: "Turismo e promozione territoriale",
     subcategory: "Pro Loco",
     regione: "Lombardia",
-    source_ids: ["miur-statali", "dir-cai"],
+    source_ids: ["dir-cai"],
     web_query: "pro loco Lombardia email",
   };
 
-  it("turns a free-form request into sources, collected sites and a web search", async () => {
+  it("turns a free-form request into directories, collected sites and a web search", async () => {
     invoke.mockImplementation((command: string) =>
       command === "plan_lead_request" ? Promise.resolve(plan) : defaultInvoke(command),
     );
-    await renderPage("Ricerca web");
+    await renderPage();
     await userEvent.type(
       screen.getByLabelText("Descrizione della ricerca lead"),
       "tutte le pro loco della Lombardia",
@@ -489,7 +445,6 @@ describe("SearchPage", () => {
     expect(invoke).toHaveBeenCalledWith("plan_lead_request", {
       request: "tutte le pro loco della Lombardia",
     });
-    expect(invoke).toHaveBeenCalledWith("import_lead_source", { sourceId: "miur-statali" });
     expect(invoke).toHaveBeenCalledWith("explore_directory", {
       request: { sourceId: "dir-cai", useAi: true },
     });
@@ -505,7 +460,7 @@ describe("SearchPage", () => {
       }
       return command === "plan_lead_request" ? Promise.resolve(plan) : defaultInvoke(command);
     });
-    await renderPage("Ricerca web");
+    await renderPage();
     await userEvent.type(screen.getByLabelText("Descrizione della ricerca lead"), "pro loco");
     await userEvent.click(screen.getByRole("button", { name: "Cerca" }));
     await waitFor(() =>
@@ -537,7 +492,7 @@ describe("SearchPage", () => {
       }
       return command === "plan_lead_request" ? Promise.resolve(plan) : defaultInvoke(command);
     });
-    await renderPage("Ricerca web");
+    await renderPage();
     await userEvent.type(screen.getByLabelText("Descrizione della ricerca lead"), "pro loco");
     await userEvent.click(screen.getByRole("button", { name: "Cerca" }));
     await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
@@ -547,36 +502,12 @@ describe("SearchPage", () => {
   });
 
   it("finds the sites of organizations known only by name", async () => {
-    await renderPage("Ricerca web");
+    await renderPage();
     await userEvent.click(screen.getByRole("button", { name: "Trova i siti di Fonte: OSM" }));
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("find_seed_sites", { listName: "Fonte: OSM", limit: 50 }),
     );
     expect(toastSuccess).toHaveBeenCalledWith("Fonte: OSM: 3 siti trovati da leggere");
-  });
-
-  it("warns about the tables of an import that did not load", async () => {
-    invoke.mockImplementation((command: string) =>
-      command === "import_lead_source"
-        ? Promise.resolve({ ...run, run_id: "run-src", errors: ["albo-x: HTTP 500"] })
-        : defaultInvoke(command),
-    );
-    await renderPage();
-    await userEvent.click(screen.getByRole("button", { name: "Importa Scuole statali" }));
-    await waitFor(() =>
-      expect(toastWarning).toHaveBeenCalledWith("Tabelle non caricate: albo-x: HTTP 500"),
-    );
-  });
-
-  it("imports every open-data registry with one click", async () => {
-    await renderPage();
-    await userEvent.click(screen.getByRole("button", { name: "Importa tutto" }));
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("import_lead_source", { sourceId: "miur-statali" }),
-    );
-    expect(invoke).not.toHaveBeenCalledWith("import_lead_source", {
-      sourceId: "wikidata-religiosi",
-    });
   });
 
   it("paginates in bounded 100-row pages", async () => {
@@ -630,7 +561,7 @@ describe("SearchPage", () => {
     await renderPage();
     await userEvent.click(screen.getByRole("button", { name: "Aggiungi al database" }));
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("promote_search_leads", { filters: tabFilters("open") }),
+      expect(invoke).toHaveBeenCalledWith("promote_search_leads", { filters: emptyLeadFilters() }),
     );
     expect(toastSuccess).toHaveBeenCalledWith(
       "Lead aggiunti al database: 2 nuovi, 0 aggiornati, 1 in blacklist, 1 in attesa di verifica del dominio",
@@ -642,25 +573,21 @@ describe("SearchPage", () => {
     expect(invoke).not.toHaveBeenCalledWith("promote_search_leads", expect.anything());
   });
 
-  it("keeps the two tabs apart: each lists and promotes only its own runs", async () => {
-    await renderPage("Ricerca web");
+  it("lists and promotes every run kind from one table", async () => {
+    await renderPage();
     await waitFor(() =>
       expect(invoke).toHaveBeenCalledWith("list_search_leads", {
-        filters: tabFilters("web"),
+        filters: emptyLeadFilters(),
         limit: 100,
         offset: 0,
       }),
     );
-    expect(invoke).toHaveBeenCalledWith("get_lead_filter_options", {
-      kinds: ["web", "directory", "crawl"],
-    });
-    expect(
-      screen.queryByRole("button", { name: "Importa Scuole statali" }),
-    ).not.toBeInTheDocument();
-    expect(screen.getByText("Fonte: OSM")).toBeInTheDocument();
+    expect(invoke).toHaveBeenCalledWith("get_lead_filter_options", { kinds: [] });
+    expect(screen.queryByRole("tab")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Importa/ })).not.toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Aggiungi al database" }));
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("promote_search_leads", { filters: tabFilters("web") }),
+      expect(invoke).toHaveBeenCalledWith("promote_search_leads", { filters: emptyLeadFilters() }),
     );
   });
 

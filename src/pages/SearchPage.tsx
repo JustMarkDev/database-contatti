@@ -10,8 +10,7 @@ import {
   findSeedSites,
   getContextdevSettings,
   getLeadFilterOptions,
-  importLeadSource,
-  listLeadSources,
+  listLeadDirectories,
   listSearchLeads,
   planLeadRequest,
   listChannelYields,
@@ -44,8 +43,8 @@ import type {
   FieldFilter,
   LeadFilterOptions,
   LeadFilters,
+  LeadDirectory,
   LeadPlan,
-  LeadSource,
   SearchLeadView,
   SearchRunView,
   SeedListView,
@@ -54,9 +53,9 @@ import type {
 /**
  * Cerca lead: a sandbox that mirrors the contacts database.
  *
- * Open-data imports, directories, web search and site crawls all land here
- * first; **Aggiungi al database** promotes the filtered leads into contacts.
- * Sites without a published address become "siti da esplorare" (seeds).
+ * Directories, web search, Google Maps and site reads (all through
+ * context.dev) land here first; **Aggiungi al database** promotes the
+ * filtered leads into contacts. Sites to read are "seeds", grouped in lists.
  */
 
 const PAGE_SIZE = 100;
@@ -100,17 +99,6 @@ export const emptyLeadFilters = (): LeadFilters => ({
   method: emptyField(),
   pec: emptyField(),
   stato: emptyField(),
-});
-/** The two halves of the page: open data parsed directly, or web search and crawl. */
-export type LeadMode = "open" | "web";
-const MODE_KINDS: Record<LeadMode, string[]> = {
-  open: ["source"],
-  web: ["web", "directory", "crawl"],
-};
-/** Empty filters scoped to the runs of one tab. */
-export const tabFilters = (mode: LeadMode): LeadFilters => ({
-  ...emptyLeadFilters(),
-  kind: { include: MODE_KINDS[mode], exclude: [] },
 });
 const emptyOptions = (): LeadFilterOptions => ({
   run: [],
@@ -201,12 +189,6 @@ function leadSections(lead: SearchLeadView): DetailSection[] {
   ];
 }
 
-/** Datasets first, then directories. */
-function sortLeadSources(catalog: LeadSource[]): LeadSource[] {
-  const rank = { dataset: 0, directory: 1 } as const;
-  return [...catalog].sort((left, right) => rank[left.kind] - rank[right.kind]);
-}
-
 function Panel({
   title,
   description,
@@ -252,16 +234,11 @@ function SourceCard({
   );
 }
 
-type RunTotals = { lead_count: number; page_count: number; errors?: string[] };
+type RunTotals = { lead_count: number; page_count: number };
 const addTotals = (total: RunTotals, part: RunTotals | null): RunTotals => ({
   lead_count: total.lead_count + (part?.lead_count ?? 0),
   page_count: total.page_count + (part?.page_count ?? 0),
-  errors: [...(total.errors ?? []), ...(part?.errors ?? [])],
 });
-/** Tell the user which tables of an import did not load; the rest was imported. */
-const warnAboutErrors = (errors: string[] | undefined) => {
-  if (errors?.length) toast.warning(`Tabelle non caricate: ${errors.join(" · ")}`);
-};
 
 export function SearchPage({
   active,
@@ -270,8 +247,7 @@ export function SearchPage({
   active: boolean;
   onContactsChanged: () => void;
 }) {
-  const [mode, setMode] = useState<LeadMode>("open");
-  const [filters, setFilters] = useState<LeadFilters>(() => tabFilters("open"));
+  const [filters, setFilters] = useState<LeadFilters>(emptyLeadFilters);
   const [searchText, setSearchText] = useState("");
   const [options, setOptions] = useState<LeadFilterOptions>(emptyOptions);
   const [runs, setRuns] = useState<SearchRunView[]>([]);
@@ -286,7 +262,7 @@ export function SearchPage({
   const [progress, setProgress] = useState<CrawlProgress | null>(null);
   const [promoting, setPromoting] = useState(false);
 
-  const [sources, setSources] = useState<LeadSource[] | null>(null);
+  const [directories, setDirectories] = useState<LeadDirectory[] | null>(null);
   const [seedLists, setSeedLists] = useState<SeedListView[]>([]);
   const [mapsEnabled, setMapsEnabled] = useState(false);
   const [pagesPerSite, setPagesPerSite] = useState(3);
@@ -337,19 +313,19 @@ export function SearchPage({
     const report = (error: unknown) => {
       if (mounted.current) toast.error(String(error));
     };
-    if (!sources) {
-      void listLeadSources()
-        .then((catalog) => mounted.current && setSources(sortLeadSources(catalog)))
+    if (!directories) {
+      void listLeadDirectories()
+        .then((catalog) => mounted.current && setDirectories(catalog))
         .catch(report);
     }
-  }, [active, sources]);
+  }, [active, directories]);
 
   useEffect(() => {
     if (!active) return;
     const report = (error: unknown) => {
       if (mounted.current) toast.error(String(error));
     };
-    void getLeadFilterOptions(MODE_KINDS[mode])
+    void getLeadFilterOptions([])
       .then((value) => mounted.current && setOptions(value))
       .catch(report);
     void listSearchRuns()
@@ -364,7 +340,7 @@ export function SearchPage({
     void listChannelYields()
       .then((value) => mounted.current && setYields(value))
       .catch(report);
-  }, [active, mode, refreshKey]);
+  }, [active, refreshKey]);
 
   useEffect(() => {
     setOffset(0);
@@ -410,16 +386,7 @@ export function SearchPage({
     `${summary.lead_count.toLocaleString("it-IT")} lead` +
     (summary.page_count ? `, ${summary.page_count.toLocaleString("it-IT")} pagine lette` : "");
 
-  function showOnlyRun(runId: string) {
-    setSearchText("");
-    setFilters((previous) => ({
-      ...tabFilters("open"),
-      kind: previous.kind,
-      run: { include: [runId], exclude: [] },
-    }));
-  }
-
-  /** Free-form request: the IA picks sources and filters, then everything runs on its own. */
+  /** Free-form request: the IA picks directories and filters, then everything runs on its own. */
   async function startRequest() {
     const trimmed = query.trim();
     if (!trimmed) {
@@ -440,16 +407,12 @@ export function SearchPage({
         }
       };
       for (const id of plan.source_ids) {
-        const source = sources?.find((candidate) => candidate.id === id);
-        if (!source) {
-          problems.push(`Fonte sconosciuta: ${id}`);
+        const entry = directories?.find((candidate) => candidate.id === id);
+        if (!entry) {
+          problems.push(`Elenco sconosciuto: ${id}`);
           continue;
         }
-        await attempt(source.name, () =>
-          source.kind === "directory"
-            ? exploreDirectory({ sourceId: id, useAi: USE_AI })
-            : importLeadSource(id),
-        );
+        await attempt(entry.name, () => exploreDirectory({ sourceId: id, useAi: USE_AI }));
       }
       await attempt("Siti già raccolti", () => readList(null, plan));
       let newSites = 0;
@@ -477,14 +440,13 @@ export function SearchPage({
       if (mounted.current) {
         setSearchText("");
         setFilters({
-          ...tabFilters("web"),
+          ...emptyLeadFilters(),
           category: { include: plan.category ? [plan.category] : [], exclude: [] },
           subcategory: { include: plan.subcategory ? [plan.subcategory] : [], exclude: [] },
           regione: { include: plan.regione ? [plan.regione] : [], exclude: [] },
         });
       }
       if (problems.length > 0) toast.error(problems.join(" · "));
-      warnAboutErrors(totals.errors);
       if (totals.lead_count === 0 && totals.page_count === 0 && problems.length === 0) {
         throw new Error("Nessun risultato per questa richiesta.");
       }
@@ -498,15 +460,6 @@ export function SearchPage({
     void perform(`Ricerca dei siti di ${list.list_name}`, async () => {
       const found = await findSeedSites(list.list_name, SITES_TO_FIND);
       return `${list.list_name}: ${found.toLocaleString("it-IT")} siti trovati da leggere`;
-    });
-  }
-
-  function importSource(source: LeadSource) {
-    void perform(`Importazione ${source.name}`, async () => {
-      const summary = await importLeadSource(source.id);
-      warnAboutErrors(summary.errors);
-      showOnlyRun(summary.run_id);
-      return `${source.name}: ${runMessage(summary)}`;
     });
   }
 
@@ -531,7 +484,6 @@ export function SearchPage({
 
   /** One checkbox of "Usa i siti già pubblici": what it reads when started. */
   const places = useMemo(() => {
-    const catalog = sources ?? [];
     const chained = new Set<string>();
     const items: {
       key: string;
@@ -542,36 +494,20 @@ export function SearchPage({
       directory: boolean;
       run: () => Promise<RunTotals | null>;
     }[] = [];
-    for (const source of catalog) {
-      if (source.kind === "directory") {
-        const list = `Elenco: ${source.name}`;
-        chained.add(list);
-        items.push({
-          key: source.id,
-          title: source.name,
-          meta: source.note,
-          list,
-          directory: true,
-          run: async () => {
-            const own = await exploreDirectory({ sourceId: source.id, useAi: USE_AI });
-            return addTotals(own, await readList(list));
-          },
-        });
-      } else if (source.kind === "dataset" && source.emails === "no") {
-        const list = `Fonte: ${source.name}`;
-        chained.add(list);
-        items.push({
-          key: source.id,
-          title: source.name,
-          meta: source.note,
-          list,
-          directory: false,
-          run: async () => {
-            const own = await importLeadSource(source.id);
-            return addTotals(own, await readList(list));
-          },
-        });
-      }
+    for (const entry of directories ?? []) {
+      const list = `Elenco: ${entry.name}`;
+      chained.add(list);
+      items.push({
+        key: entry.id,
+        title: entry.name,
+        meta: entry.note,
+        list,
+        directory: true,
+        run: async () => {
+          const own = await exploreDirectory({ sourceId: entry.id, useAi: USE_AI });
+          return addTotals(own, await readList(list));
+        },
+      });
     }
     for (const list of seedLists) {
       if (list.pending === 0 || chained.has(list.list_name)) continue;
@@ -588,30 +524,7 @@ export function SearchPage({
     }
     return items;
     // readList reads the page settings when it runs.
-  }, [sources, seedLists, pagesPerSite, schoolPdfs]);
-
-  /** Every open-data registry that publishes emails, one after the other. */
-  function importAll() {
-    const registries = (sources ?? []).filter(
-      (source) => source.kind === "dataset" && source.emails !== "no",
-    );
-    stopped.current = false;
-    void perform("Importazione di tutti i dati aperti", async () => {
-      let totals: RunTotals = { lead_count: 0, page_count: 0 };
-      const failed: string[] = [];
-      for (const source of registries) {
-        if (stopped.current) break;
-        try {
-          totals = addTotals(totals, await importLeadSource(source.id));
-        } catch {
-          failed.push(source.name);
-        }
-      }
-      if (failed.length > 0) toast.error(`Non importati: ${failed.join(", ")}`);
-      warnAboutErrors(totals.errors);
-      return `Dati aperti importati: ${runMessage(totals)}`;
-    });
-  }
+  }, [directories, seedLists, pagesPerSite, schoolPdfs]);
 
   function togglePlace(key: string) {
     setPicked((previous) => {
@@ -664,7 +577,6 @@ export function SearchPage({
       }
       setPicked(new Set());
       if (failed.length > 0) toast.error(failed.join(" · "));
-      warnAboutErrors(totals.errors);
       return `Lettura conclusa: ${runMessage(totals)}`;
     });
   }
@@ -735,8 +647,8 @@ export function SearchPage({
           <div>
             <h1>Cerca lead</h1>
             <p className="topbar-description">
-              Importa dati aperti o cerca sul web. I lead restano qui, con gli stessi campi dei
-              contatti, finché non li aggiungi al database.
+              Cerca sul web o leggi gli elenchi pubblici con context.dev. I lead restano qui, con
+              gli stessi campi dei contatti, finché non li aggiungi al database.
             </p>
           </div>
           <div className="header-metrics">
@@ -789,231 +701,167 @@ export function SearchPage({
       )}
 
       <div className="island-section search-panels">
-        <div className="search-tabs" role="tablist" aria-label="Tipo di ricerca">
-          {(
-            [
-              ["open", "Dati aperti", "Dataset scaricati e letti direttamente"],
-              ["web", "Ricerca web", "Descrivi cosa cerchi o scegli i siti da leggere"],
-            ] as const
-          ).map(([value, label, hint]) => (
-            <button
-              key={value}
-              type="button"
-              role="tab"
-              aria-selected={mode === value}
-              className="search-tab"
-              onClick={() => {
-                if (mode === value) return;
-                setMode(value);
-                setSearchText("");
-                setFilters(tabFilters(value));
-              }}
-            >
-              <strong>{label}</strong>
-              <span>{hint}</span>
-            </button>
-          ))}
-        </div>
-
-        {mode === "open" && (
+        <>
           <Panel
-            title="Dati aperti"
-            description="Registri pubblici scaricati per intero: email, sito e indirizzo sono già scritti nel file."
+            title="Cosa vuoi trovare?"
+            description="Scrivilo con parole tue: l'IA sceglie gli elenchi, legge i siti e cerca anche sul web."
             open
           >
-            <Button onClick={importAll} disabled={working} className="justify-self-start">
-              <Icon name="download" size={16} className="size-4" />
-              Importa tutto
-            </Button>
-            <ul className="search-sources">
-              {sources
-                ?.filter((source) => source.kind === "dataset" && source.emails !== "no")
-                .map((source) => (
-                  <SourceCard
-                    key={source.id}
-                    title={source.name}
-                    meta={`${source.publisher} · ${source.license}`}
-                    note={source.note}
-                  >
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => importSource(source)}
-                      disabled={working}
-                      aria-label={`Importa ${source.name}`}
-                    >
-                      Importa
-                    </Button>
-                  </SourceCard>
-                ))}
-            </ul>
-          </Panel>
-        )}
-        {mode === "web" && (
-          <>
-            <Panel
-              title="Cosa vuoi trovare?"
-              description="Scrivilo con parole tue: l'IA sceglie le fonti, legge i siti e cerca anche sul web."
-              open
-            >
-              <div className="search-query-block">
-                <div className="search-query-row">
-                  <div className="search-field">
-                    <Icon name="search" size={16} className="search-field-icon" />
-                    <Input
-                      className="h-10 pl-9 text-sm"
-                      value={query}
-                      onChange={(event) => setQuery(event.currentTarget.value)}
-                      onKeyDown={(event) => {
-                        if (event.key === "Enter" && !working) void startRequest();
-                      }}
-                      placeholder="Scrivi cosa cerchi, per esempio tutte le pro loco della Lombardia"
-                      aria-label="Descrizione della ricerca lead"
-                    />
-                  </div>
-                  <Button
-                    className="h-10 px-4"
-                    onClick={() => void startRequest()}
-                    disabled={working || !query.trim()}
-                  >
-                    <Icon name="sparkle" size={16} className="size-4" />
-                    Cerca
-                  </Button>
+            <div className="search-query-block">
+              <div className="search-query-row">
+                <div className="search-field">
+                  <Icon name="search" size={16} className="search-field-icon" />
+                  <Input
+                    className="h-10 pl-9 text-sm"
+                    value={query}
+                    onChange={(event) => setQuery(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && !working) void startRequest();
+                    }}
+                    placeholder="Scrivi cosa cerchi, per esempio tutte le pro loco della Lombardia"
+                    aria-label="Descrizione della ricerca lead"
+                  />
                 </div>
+                <Button
+                  className="h-10 px-4"
+                  onClick={() => void startRequest()}
+                  disabled={working || !query.trim()}
+                >
+                  <Icon name="sparkle" size={16} className="size-4" />
+                  Cerca
+                </Button>
               </div>
-            </Panel>
+            </div>
+          </Panel>
 
-            <Panel
-              title="Usa i siti già pubblici"
-              description="Scegli dove cercare: l'app legge quei siti con l'IA e raccoglie le email."
-              open
+          <Panel
+            title="Usa i siti già pubblici"
+            description="Scegli dove cercare: l'app legge quei siti con l'IA e raccoglie le email."
+            open
+          >
+            <ul className="search-sources">
+              {places.map((place) => (
+                <SourceCard key={place.key} title={place.title} note={place.meta}>
+                  <label>
+                    <input
+                      type="checkbox"
+                      checked={picked.has(place.key)}
+                      onChange={() => togglePlace(place.key)}
+                      disabled={working}
+                    />
+                    Usa questo elenco
+                  </label>
+                </SourceCard>
+              ))}
+            </ul>
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="flex flex-col gap-1 text-sm">
+                Pagine per sito (1 credito ciascuna, più 1 per la mappa del sito)
+                <select
+                  aria-label="Pagine per sito"
+                  value={pagesPerSite}
+                  onChange={(event) => setPagesPerSite(Number(event.currentTarget.value))}
+                  disabled={working}
+                >
+                  {PAGES_PER_SITE_OPTIONS.map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label className="flex flex-col gap-1 text-sm">
+                PDF per sito di scuola (circolari con i referenti)
+                <select
+                  aria-label="PDF per sito di scuola"
+                  value={schoolPdfs}
+                  onChange={(event) => setSchoolPdfs(Number(event.currentTarget.value))}
+                  disabled={working}
+                >
+                  {SCHOOL_PDF_OPTIONS.map((value) => (
+                    <option key={value} value={value}>
+                      {value}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <Button
+              onClick={() => void readPlaces()}
+              disabled={working || picked.size === 0}
+              className="justify-self-start"
             >
-              <ul className="search-sources">
-                {places.map((place) => (
-                  <SourceCard key={place.key} title={place.title} note={place.meta}>
-                    <label>
-                      <input
-                        type="checkbox"
-                        checked={picked.has(place.key)}
-                        onChange={() => togglePlace(place.key)}
+              <Icon name="sparkle" size={16} className="size-4" />
+              Leggi i siti scelti
+            </Button>
+            {seedLists.some((list) => list.without_site > 0) && (
+              <ul className="search-sources" aria-label="Enti senza sito">
+                {seedLists
+                  .filter((list) => list.without_site > 0)
+                  .map((list) => (
+                    <SourceCard
+                      key={`find:${list.list_name}`}
+                      title={`${list.list_name}: enti senza sito`}
+                      note={`${list.without_site.toLocaleString("it-IT")} enti noti solo per nome: la ricerca web trova il sito e lo controlla prima di leggerlo`}
+                    >
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => findSites(list)}
                         disabled={working}
-                      />
-                      Usa questo elenco
-                    </label>
-                  </SourceCard>
-                ))}
-              </ul>
-              <div className="grid gap-3 sm:grid-cols-2">
-                <label className="flex flex-col gap-1 text-sm">
-                  Pagine per sito (1 credito ciascuna, più 1 per la mappa del sito)
-                  <select
-                    aria-label="Pagine per sito"
-                    value={pagesPerSite}
-                    onChange={(event) => setPagesPerSite(Number(event.currentTarget.value))}
-                    disabled={working}
-                  >
-                    {PAGES_PER_SITE_OPTIONS.map((value) => (
-                      <option key={value} value={value}>
-                        {value}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-                <label className="flex flex-col gap-1 text-sm">
-                  PDF per sito di scuola (circolari con i referenti)
-                  <select
-                    aria-label="PDF per sito di scuola"
-                    value={schoolPdfs}
-                    onChange={(event) => setSchoolPdfs(Number(event.currentTarget.value))}
-                    disabled={working}
-                  >
-                    {SCHOOL_PDF_OPTIONS.map((value) => (
-                      <option key={value} value={value}>
-                        {value}
-                      </option>
-                    ))}
-                  </select>
-                </label>
-              </div>
-              <Button
-                onClick={() => void readPlaces()}
-                disabled={working || picked.size === 0}
-                className="justify-self-start"
-              >
-                <Icon name="sparkle" size={16} className="size-4" />
-                Leggi i siti scelti
-              </Button>
-              {seedLists.some((list) => list.without_site > 0) && (
-                <ul className="search-sources" aria-label="Enti senza sito">
-                  {seedLists
-                    .filter((list) => list.without_site > 0)
-                    .map((list) => (
-                      <SourceCard
-                        key={`find:${list.list_name}`}
-                        title={`${list.list_name}: enti senza sito`}
-                        note={`${list.without_site.toLocaleString("it-IT")} enti noti solo per nome: la ricerca web trova il sito e lo controlla prima di leggerlo`}
+                        aria-label={`Trova i siti di ${list.list_name}`}
                       >
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => findSites(list)}
-                          disabled={working}
-                          aria-label={`Trova i siti di ${list.list_name}`}
-                        >
-                          Trova i siti
-                        </Button>
-                      </SourceCard>
-                    ))}
-                </ul>
-              )}
-            </Panel>
-
-            {yields.length > 0 && (
-              <Panel
-                title="Resa delle fonti di siti nuovi"
-                description="Crediti spesi per trovare e leggere i siti di ogni fonte, e indirizzi nuovi trovati."
-              >
-                <Table aria-label="Resa per fonte">
-                  <TableHeader>
-                    <TableRow>
-                      <TableHead>fonte</TableHead>
-                      <TableHead>siti</TableHead>
-                      <TableHead>crediti</TableHead>
-                      <TableHead>email nuove</TableHead>
-                      <TableHead>crediti per email</TableHead>
-                    </TableRow>
-                  </TableHeader>
-                  <TableBody>
-                    {yields.map((row) => {
-                      const spent = row.discovery_credits + row.reading_credits;
-                      return (
-                        <TableRow key={row.channel}>
-                          <TableCell>{row.channel}</TableCell>
-                          <TableCell className="cell-num">
-                            {row.seeds.toLocaleString("it-IT")}
-                          </TableCell>
-                          <TableCell className="cell-num">
-                            {spent.toLocaleString("it-IT")}
-                          </TableCell>
-                          <TableCell className="cell-num">
-                            {row.new_emails.toLocaleString("it-IT")}
-                          </TableCell>
-                          <TableCell className="cell-num">
-                            {row.new_emails
-                              ? (spent / row.new_emails).toLocaleString("it-IT", {
-                                  maximumFractionDigits: 1,
-                                })
-                              : "—"}
-                          </TableCell>
-                        </TableRow>
-                      );
-                    })}
-                  </TableBody>
-                </Table>
-              </Panel>
+                        Trova i siti
+                      </Button>
+                    </SourceCard>
+                  ))}
+              </ul>
             )}
-          </>
-        )}
+          </Panel>
+
+          {yields.length > 0 && (
+            <Panel
+              title="Resa delle fonti di siti nuovi"
+              description="Crediti spesi per trovare e leggere i siti di ogni fonte, e indirizzi nuovi trovati."
+            >
+              <Table aria-label="Resa per fonte">
+                <TableHeader>
+                  <TableRow>
+                    <TableHead>fonte</TableHead>
+                    <TableHead>siti</TableHead>
+                    <TableHead>crediti</TableHead>
+                    <TableHead>email nuove</TableHead>
+                    <TableHead>crediti per email</TableHead>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {yields.map((row) => {
+                    const spent = row.discovery_credits + row.reading_credits;
+                    return (
+                      <TableRow key={row.channel}>
+                        <TableCell>{row.channel}</TableCell>
+                        <TableCell className="cell-num">
+                          {row.seeds.toLocaleString("it-IT")}
+                        </TableCell>
+                        <TableCell className="cell-num">{spent.toLocaleString("it-IT")}</TableCell>
+                        <TableCell className="cell-num">
+                          {row.new_emails.toLocaleString("it-IT")}
+                        </TableCell>
+                        <TableCell className="cell-num">
+                          {row.new_emails
+                            ? (spent / row.new_emails).toLocaleString("it-IT", {
+                                maximumFractionDigits: 1,
+                              })
+                            : "—"}
+                        </TableCell>
+                      </TableRow>
+                    );
+                  })}
+                </TableBody>
+              </Table>
+            </Panel>
+          )}
+        </>
       </div>
 
       <div className="island-section">
@@ -1037,7 +885,7 @@ export function SearchPage({
               variant="ghost"
               onClick={() => {
                 setSearchText("");
-                setFilters(tabFilters(mode));
+                setFilters(emptyLeadFilters());
               }}
             >
               Azzera filtri
@@ -1128,7 +976,7 @@ export function SearchPage({
         {hasLoaded && !loading && leads.length === 0 && (
           <p className="table-empty-state">
             {runs.length === 0
-              ? "Importa una fonte aperta, esplora un elenco o avvia una ricerca per vedere i lead."
+              ? "Esplora un elenco o avvia una ricerca per vedere i lead."
               : "Nessun lead corrisponde ai filtri."}
           </p>
         )}

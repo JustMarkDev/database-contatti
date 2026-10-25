@@ -7,8 +7,8 @@ import type {
   ExploreEstimate,
   LeadFilterOptions,
   LeadFilters,
+  LeadDirectory,
   LeadPlan,
-  LeadSource,
   SearchLeadList,
   SearchRunSummary,
   SearchRunView,
@@ -79,11 +79,8 @@ export const listSearchRuns = () => invoke<SearchRunView[]>("list_search_runs");
 
 export const deleteSearchRun = (runId: string) => invoke<void>("delete_search_run", { runId });
 
-export const listLeadSources = () => invoke<LeadSource[]>("list_lead_sources");
-
-/** Downloads one open-data source into a new sandbox run (sites without email become seeds). */
-export const importLeadSource = (sourceId: string) =>
-  invoke<SearchRunSummary>("import_lead_source", { sourceId });
+/** Public lists of organizations read like sites (their entries become seeds). */
+export const listLeadDirectories = () => invoke<LeadDirectory[]>("list_lead_directories");
 
 export const listSeedLists = () => invoke<SeedListView[]>("list_seed_lists");
 
@@ -144,6 +141,6 @@ export const exportSearchLeadsTxt = (filters: LeadFilters, path: string) =>
 export const promoteSearchLeads = (filters: LeadFilters) =>
   invoke<PromoteSearchReport>("promote_search_leads", { filters });
 
-/** The IA reads a free-form request into taxonomy, region, catalog sources and a web search. */
+/** The IA reads a free-form request into taxonomy, region, directories and a web search. */
 export const planLeadRequest = (request: string) =>
   invoke<LeadPlan>("plan_lead_request", { request });

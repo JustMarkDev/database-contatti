@@ -796,7 +796,7 @@ pub mod imports;
 mod lead_ai;
 mod lead_candidates;
 mod lead_crawl;
-mod lead_sources;
+mod lead_directories;
 pub mod mailbox_verification;
 mod mcp;
 pub mod parsing;
@@ -859,8 +859,7 @@ pub fn run() {
             discovery::delete_search_run,
             discovery::export_search_leads_txt,
             discovery::promote_search_leads,
-            lead_sources::list_lead_sources,
-            lead_sources::import_lead_source,
+            lead_directories::list_lead_directories,
             lead_crawl::list_seed_lists,
             lead_crawl::delete_seed_list,
             lead_crawl::add_contact_seeds,

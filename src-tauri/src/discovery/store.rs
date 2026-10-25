@@ -72,19 +72,23 @@ pub(crate) fn persist_search_run(
             query_text,
             source_id: None,
             seed_count: seeds.len() as i64,
-            page_count: pages.len() as i64,
-            pdf_found,
-            errors,
             now,
         },
+        pages.len() as i64,
+        pdf_found,
+        errors,
         accumulators.into_values(),
     )
 }
 
-/// Insert the leads with their run in a single transaction.
+/// Insert the leads with their run in a single transaction (offline tests).
+#[cfg(test)]
 pub(crate) fn insert_run(
     db: &Connection,
     run: &RunRecord,
+    page_count: i64,
+    pdf_found: i64,
+    errors: &[String],
     leads: impl IntoIterator<Item = LeadAccumulator>,
 ) -> Result<SearchRunSummary, String> {
     let owned = db
@@ -94,23 +98,16 @@ pub(crate) fn insert_run(
         .map_err(|error| error.to_string())?;
     let run_id = create_run(db, run, "running")?;
     let lead_count = append_leads(db, &run_id, leads)?;
-    finish_run(
-        db,
-        &run_id,
-        "completed",
-        run.page_count,
-        run.pdf_found,
-        run.errors,
-    )?;
+    finish_run(db, &run_id, "completed", page_count, pdf_found, errors)?;
     if let Some(transaction) = owned {
         transaction.commit().map_err(|error| error.to_string())?;
     }
     Ok(SearchRunSummary {
         run_id,
         lead_count: lead_count as i64,
-        page_count: run.page_count,
-        pdf_found: run.pdf_found,
-        errors: run.errors.to_vec(),
+        page_count,
+        pdf_found,
+        errors: errors.to_vec(),
     })
 }
 

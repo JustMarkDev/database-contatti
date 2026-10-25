@@ -2990,11 +2990,11 @@ fn lead_promotion_fills_empty_contact_fields_without_overwriting_known_ones() {
             query_text: "Fonte: ANA",
             source_id: Some("ana-sezioni"),
             seed_count: 0,
-            page_count: 0,
-            pdf_found: 0,
-            errors: &[],
             now: "2026-09-30T10:00:00Z",
         },
+        0,
+        0,
+        &[],
         [lead],
     )
     .unwrap();
@@ -3149,11 +3149,11 @@ fn insert_source_lead(
             query_text: "Fonte",
             source_id: Some(source_id),
             seed_count: 0,
-            page_count: 0,
-            pdf_found: 0,
-            errors: &[],
             now: "2026-09-30T10:00:00Z",
         },
+        0,
+        0,
+        &[],
         [lead],
     )
     .unwrap()
@@ -3837,7 +3837,11 @@ fn tauri_commands_touching_state_never_run_on_the_ui_thread() {
         r"#\[tauri::command\]\s*\n(?:\s*#\[[^\n]*\]\n)*\s*(?:pub(?:\(crate\))? )?(async )?fn (\w+)",
     )
     .unwrap();
-    let allowed = ["control_import", "list_lead_sources", "cancel_lead_crawl"];
+    let allowed = [
+        "control_import",
+        "list_lead_directories",
+        "cancel_lead_crawl",
+    ];
     let mut sync_commands = Vec::new();
     let mut pending = vec![std::path::PathBuf::from(concat!(
         env!("CARGO_MANIFEST_DIR"),

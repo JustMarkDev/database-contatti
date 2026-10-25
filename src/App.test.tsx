@@ -140,7 +140,7 @@ function defaultInvoke(command: string) {
       has_next: false,
     });
   if (
-    ["list_search_runs", "list_seed_lists", "list_lead_sources", "list_lead_taxonomy"].includes(
+    ["list_search_runs", "list_seed_lists", "list_lead_directories", "list_lead_taxonomy"].includes(
       command,
     )
   )
