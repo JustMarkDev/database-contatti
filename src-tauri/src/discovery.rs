@@ -25,6 +25,8 @@ use std::io::Write;
 use std::path::Path;
 use std::sync::LazyLock;
 
+#[cfg(test)]
+mod spike;
 mod store;
 
 pub(crate) use store::*;

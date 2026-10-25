@@ -93,7 +93,7 @@ impl KnownSites {
     }
 }
 
-fn is_unwanted(host: &str) -> bool {
+pub(crate) fn is_unwanted(host: &str) -> bool {
     crate::discovery::is_portal(host) || is_provider_domain(host.trim_start_matches("www."))
 }
 
