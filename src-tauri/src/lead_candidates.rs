@@ -19,6 +19,7 @@ use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 
+pub(crate) const CHANNEL_LINKS: &str = "Scoperta: link in uscita";
 pub(crate) const CHANNEL_SEARCH: &str = "Scoperta: ricerca web";
 /// Credits spent finding the site of organizations known only by name.
 pub(crate) const CHANNEL_FIND_SITES: &str = "Scoperta: trova siti";

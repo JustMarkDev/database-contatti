@@ -41,6 +41,8 @@ const USER_AGENT: &str = "DatabaseContatti/0.1 (+https://github.com/JustMarkDev/
 const MAX_HOST_ERRORS: usize = 3;
 /// Candidates the model may choose from, best local score first.
 const MAX_AI_CANDIDATES: usize = 40;
+/// Links to other sites kept per site read (directories keep them all).
+const MAX_OUTBOUND_PER_SITE: usize = 40;
 const CONTEXT_RADIUS: usize = 160;
 
 static SCRIPT_OR_STYLE_RE: LazyLock<Regex> = LazyLock::new(|| {
@@ -759,7 +761,7 @@ pub(crate) struct HostCrawl {
     pub(crate) pages: Vec<FetchedPage>,
     pub(crate) errors: Vec<String>,
     pub(crate) pdf_found: usize,
-    /// Directory mode: `(url, anchor text)` of links to other sites.
+    /// `(url, anchor text)` of links to other sites: candidate new seeds.
     pub(crate) outbound: Vec<(String, String)>,
     /// The host the site answered from after redirects, when it differs.
     pub(crate) site_host: Option<String>,
@@ -805,11 +807,6 @@ const OUTBOUND_NOISE: [&str; 24] = [
     "tiktok.",
 ];
 
-fn registrable(host: &str) -> String {
-    let labels: Vec<&str> = host.trim_start_matches("www.").split('.').collect();
-    labels[labels.len().saturating_sub(2)..].join(".")
-}
-
 /// Parse a fetched page, skip it when its content duplicates an already
 /// collected page on the same host, otherwise queue its follow-up links
 /// (priority links first, in document order) and store it. Returns the newly
@@ -836,24 +833,32 @@ fn ingest_page(state: &mut HostState, url: String, html: String, via: &'static s
             }
         }
     }
-    if state.prefix.is_some() {
-        let own = registrable(&state.host);
-        for (link, text) in page_anchors(&url, &html) {
-            let Some(host) = url_host(&link) else {
-                continue;
-            };
-            if registrable(&host) == own
-                || OUTBOUND_NOISE.iter().any(|noise| host.contains(noise))
-                || state
-                    .crawl
-                    .outbound
-                    .iter()
-                    .any(|(known, _)| url_host(known) == Some(host.clone()))
-            {
-                continue;
-            }
-            state.crawl.outbound.push((link, text));
+    // Links to other sites (a diocese's parishes, a comune's associations, a
+    // directory's members): discovery candidates, at no extra credit.
+    let cap = if state.prefix.is_some() {
+        usize::MAX
+    } else {
+        MAX_OUTBOUND_PER_SITE
+    };
+    for (link, text) in page_anchors(&url, &html) {
+        if state.crawl.outbound.len() >= cap {
+            break;
         }
+        let Some(host) = url_host(&link) else {
+            continue;
+        };
+        if crate::lead_crawl::same_site(host.trim_start_matches("www."), &state.host)
+            || is_portal(&host)
+            || is_noise(&link)
+            || state
+                .crawl
+                .outbound
+                .iter()
+                .any(|(known, _)| url_host(known) == Some(host.clone()))
+        {
+            continue;
+        }
+        state.crawl.outbound.push((link, text));
     }
     let pdfs = parsed.pdf_urls.clone();
     state.crawl.pages.push(FetchedPage { url, html, via });
@@ -1680,6 +1685,40 @@ mod tests {
         let found: Vec<&str> = parsed.emails.iter().map(|hit| hit.email.as_str()).collect();
         assert_eq!(found, ["utente@example.test"]);
         assert_eq!(decode_cfemail("zz"), None);
+    }
+
+    #[test]
+    fn discovery_every_site_keeps_its_links_to_other_sites() {
+        let html = r#"<a href="/contatti">Contatti</a>
+            <a href="https://www.parrocchia-sanmarco.example.test/">Parrocchia San Marco</a>
+            <a href="https://oratorio.diocesi.example.test/">Oratorio</a>
+            <a href="https://www.facebook.com/diocesi">Facebook</a>
+            <a href="https://www.altra.example.test/news/2026">Notizia</a>"#;
+        let mut state = HostState {
+            host: "www.diocesi.example.test".to_owned(),
+            cap: 3,
+            pdf_cap: 0,
+            pdf_count: 0,
+            queue: VecDeque::new(),
+            visited: HashSet::new(),
+            seen_content: HashSet::new(),
+            prefix: None,
+            crawl: HostCrawl::default(),
+        };
+        ingest_page(
+            &mut state,
+            "https://www.diocesi.example.test/".to_owned(),
+            html.to_owned(),
+            VIA,
+        );
+        assert!(state.queue.is_empty(), "a site's pages are chosen up front");
+        assert_eq!(
+            state.crawl.outbound,
+            [(
+                "https://www.parrocchia-sanmarco.example.test/".to_owned(),
+                "Parrocchia San Marco".to_owned()
+            )]
+        );
     }
 
     #[test]

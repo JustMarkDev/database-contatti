@@ -733,7 +733,7 @@ pub(crate) async fn crawl_urls(
     let mut pdf_found = 0i64;
     let mut lead_total = 0i64;
     let mut errors: Vec<String> = Vec::new();
-    let mut directory_sites: Vec<SeedRow> = Vec::new();
+    let mut linked_sites: Vec<SeedRow> = Vec::new();
     while let Some((host, crawl, leads, outbound, host_errors, skipped)) = stream.next().await {
         done += 1;
         if skipped {
@@ -750,9 +750,7 @@ pub(crate) async fn crawl_urls(
         let first_error = crawl.errors.first().cloned();
         errors.extend(crawl.errors.into_iter().chain(host_errors));
         let (persist_app, persist_run, persist_now) = (app.clone(), run_id.clone(), now.clone());
-        if job.directory.is_some() {
-            directory_sites.extend(outbound);
-        }
+        linked_sites.extend(outbound);
         let persist_host = host.clone();
         let inserted = crate::database::blocking(move || {
             let db = open_db(&persist_app)?;
@@ -787,22 +785,46 @@ pub(crate) async fn crawl_urls(
     }
     drop(stream);
 
-    if let Some(directory) = &job.directory {
-        let candidates = directory_sites
-            .into_iter()
-            .filter_map(|seed| {
-                Some(crate::lead_candidates::Candidate {
-                    url: seed.url?,
-                    name: seed.name,
-                    context: seed.context,
-                    ..Default::default()
-                })
+    // Channels 1 and 2: links out of the sites read, or a directory's entries.
+    let list_name = job
+        .directory
+        .as_ref()
+        .map_or(crate::lead_candidates::CHANNEL_LINKS, |directory| {
+            directory.list_name.as_str()
+        });
+    let candidates: Vec<_> = linked_sites
+        .into_iter()
+        .filter_map(|seed| {
+            Some(crate::lead_candidates::Candidate {
+                url: seed.url?,
+                name: seed.name,
+                context: seed.context,
+                ..Default::default()
             })
-            .collect();
-        if let Err(error) =
-            crate::lead_candidates::accept_candidates(&app, &directory.list_name, candidates).await
-        {
-            errors.push(format!("Siti dell'elenco non salvati: {error}"));
+        })
+        .collect();
+    if !candidates.is_empty() {
+        match crate::lead_candidates::accept_candidates(&app, list_name, candidates).await {
+            // The links cost nothing; the directory pages are counted in this run.
+            Ok(report) if job.directory.is_none() => {
+                let recorded = crate::database::blocking({
+                    let app = app.clone();
+                    move || {
+                        crate::lead_candidates::record_discovery(
+                            &*open_db(&app)?,
+                            crate::lead_candidates::CHANNEL_LINKS,
+                            &report,
+                            &[],
+                        )
+                    }
+                })
+                .await;
+                if let Err(error) = recorded {
+                    errors.push(format!("Siti collegati: {error}"));
+                }
+            }
+            Ok(_) => {}
+            Err(error) => errors.push(format!("Siti collegati non salvati: {error}")),
         }
     }
 
