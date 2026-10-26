@@ -499,6 +499,17 @@ fn pending_seeds(
         .collect())
 }
 
+/// Status of a host's seeds after its crawl; `None` leaves them pending. Credits,
+/// capacity, the key or a stop (not the site) mean read it again next run; the
+/// addresses found so far are kept either way.
+fn host_status(has_pages: bool, retry_later: bool) -> Option<&'static str> {
+    match (has_pages, retry_later) {
+        (_, true) => None,
+        (true, false) => Some("crawled"),
+        (false, false) => Some("failed"),
+    }
+}
+
 fn mark_host(
     db: &Connection,
     host: &str,
@@ -1057,12 +1068,7 @@ pub(crate) async fn crawl_urls(
         }
         page_count += crawl.pages.len() as i64;
         pdf_found += crawl.pdf_found as i64;
-        // Credits, capacity or the key, not the site: read it again next run.
-        let status = match (crawl.pages.is_empty(), crawl.retry_later) {
-            (false, _) => Some("crawled"),
-            (true, false) => Some("failed"),
-            (true, true) => None,
-        };
+        let status = host_status(!crawl.pages.is_empty(), crawl.retry_later);
         let first_error = crawl.errors.first().cloned();
         let host_credits = crawl.credits;
         errors.extend(crawl.errors.into_iter().chain(host_errors));
@@ -1654,6 +1660,47 @@ pub(crate) async fn find_seed_sites(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn host_stopped_midway_stays_pending() {
+        assert_eq!(host_status(true, false), Some("crawled"));
+        assert_eq!(host_status(true, true), None);
+        assert_eq!(host_status(false, true), None);
+        assert_eq!(host_status(false, false), Some("failed"));
+    }
+
+    #[test]
+    fn runs_left_running_are_closed_on_startup() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_schema(&db).unwrap();
+        let now = "2026-10-01T00:00:00Z";
+        let record = RunRecord {
+            kind: "crawl",
+            query_text: "test",
+            source_id: None,
+            seed_count: 1,
+            now,
+        };
+        let cut = create_run(&db, &record, "running").unwrap();
+        let done = create_run(&db, &record, "completed").unwrap();
+        db.execute(
+            "INSERT INTO search_leads(id,run_id,email,email_comparison_key,retrieved_at,category)
+             VALUES('l1',?1,'a@a.test','a@a.test',?2,'Istruzione')",
+            params![cut, now],
+        )
+        .unwrap();
+        assert_eq!(crate::discovery::close_orphaned_runs(&db).unwrap(), 1);
+        let row = |id: &str| -> (String, i64) {
+            db.query_row(
+                "SELECT status, lead_count FROM search_runs WHERE id=?1",
+                params![id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap()
+        };
+        assert_eq!(row(&cut), ("failed".to_owned(), 1));
+        assert_eq!(row(&done).0, "completed");
+    }
+
     use super::*;
     use crate::discovery::FetchedPage;
     use crate::schema::setup_schema;

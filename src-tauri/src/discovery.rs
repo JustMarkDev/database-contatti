@@ -753,8 +753,9 @@ pub(crate) struct HostCrawl {
     pub(crate) outbound: Vec<(String, String)>,
     /// The host the site answered from after redirects, when it differs.
     pub(crate) site_host: Option<String>,
-    /// Nothing read because of context.dev (credits, capacity, key), not the
-    /// site: the seed stays pending for the next run.
+    /// Stopped or refused by context.dev (credits, capacity, key), not the
+    /// site, before the host was read through: the seed stays pending for the
+    /// next run, the addresses found so far are kept.
     pub(crate) retry_later: bool,
     /// Calls sent for this host, one credit each by the price list.
     // shortcut: retries and Maps surcharges are not counted per host (the run's
@@ -1015,7 +1016,11 @@ async fn read_role_pdfs(settings: &CrawlSettings<'_>, state: &mut HostState) {
         }
     }
     for (url, _) in links {
-        if state.pdf_count >= state.pdf_cap || settings.stopped() {
+        if state.pdf_count >= state.pdf_cap {
+            break;
+        }
+        if settings.stopped() {
+            state.crawl.retry_later = true;
             break;
         }
         if !state.visited.insert(url.clone()) {
@@ -1182,6 +1187,7 @@ pub(crate) async fn crawl_host(
         }
         let before = state.crawl.errors.len();
         if read_page(settings, &mut state, &url).await.is_none() {
+            state.crawl.retry_later = true;
             break;
         }
         streak = if state.crawl.errors.len() > before {
@@ -1228,6 +1234,7 @@ async fn crawl_directory(
         }
         let before = state.crawl.errors.len();
         if read_page(settings, state, &url).await.is_none() {
+            state.crawl.retry_later = true;
             break;
         }
         streak = if state.crawl.errors.len() > before {

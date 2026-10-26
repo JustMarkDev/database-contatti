@@ -229,6 +229,19 @@ pub(crate) fn finish_run(
     Ok(())
 }
 
+/// Runs still `running` when the app starts were cut off (crash, quit while
+/// reading): close them as failed. Their leads and unread sites are kept.
+pub(crate) fn close_orphaned_runs(db: &Connection) -> Result<usize, String> {
+    db.execute(
+        "UPDATE search_runs SET status='failed',
+            error=coalesce(error||'; ','')||'Ricerca interrotta dalla chiusura dell''app',
+            lead_count=(SELECT COUNT(*) FROM search_leads WHERE run_id=search_runs.id)
+         WHERE status='running'",
+        [],
+    )
+    .map_err(|error| error.to_string())
+}
+
 /// Filters of the Cerca lead table: the contacts filters that make sense for
 /// leads, plus the run, the extraction method and whether the address is
 /// already in the contacts database.
