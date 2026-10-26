@@ -223,6 +223,7 @@ async function renderPage() {
 
 afterEach(() => {
   cleanup();
+  localStorage.clear();
 });
 
 beforeEach(() => {
@@ -321,9 +322,9 @@ describe("SearchPage", () => {
     ]);
   });
 
-  it("reads nothing when the estimate is declined, and uses the chosen pages per site", async () => {
+  it("reads nothing when the estimate is declined, and uses the pages per site saved in Settings", async () => {
+    localStorage.setItem("explore_prefs", JSON.stringify({ pagesPerSite: 5, schoolPdfs: 0 }));
     await renderPage();
-    await userEvent.selectOptions(screen.getByLabelText("Pagine per sito"), "5");
     await userEvent.click(
       within(screen.getByText("Fonte: OSM").closest("li")!).getByRole("checkbox"),
     );

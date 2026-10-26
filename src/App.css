@@ -169,9 +169,52 @@
     color: var(--text);
     background-color: var(--surface-2);
   }
-  input[type="checkbox"],
   input[type="range"] {
     accent-color: var(--brand);
+  }
+  input[type="checkbox"] {
+    display: inline-grid;
+    flex: none;
+    width: 16px;
+    height: 16px;
+    margin: 0;
+    place-content: center;
+    border: 1px solid var(--border-strong);
+    border-radius: 5px;
+    background: var(--field);
+    cursor: pointer;
+    appearance: none;
+  }
+  input[type="checkbox"]::after {
+    width: 9px;
+    height: 5px;
+    margin-top: -2px;
+    border: solid #0f1f18;
+    border-width: 0 0 2px 2px;
+    content: "";
+    opacity: 0;
+    transform: rotate(-45deg);
+  }
+  input[type="checkbox"]:checked {
+    border-color: var(--brand);
+    background: var(--brand);
+  }
+  input[type="checkbox"]:checked::after {
+    opacity: 1;
+  }
+  input[type="checkbox"]:focus-visible {
+    outline: 2px solid var(--brand);
+    outline-offset: 2px;
+  }
+  input[type="checkbox"]:disabled {
+    cursor: not-allowed;
+    opacity: 0.5;
+  }
+  label:has(> input[type="checkbox"]) {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    cursor: pointer;
   }
   input[type="range"] {
     width: min(240px, 100%);
@@ -492,6 +535,17 @@
     flex-wrap: wrap;
     gap: 8px;
     align-items: center;
+  }
+  .settings-advanced {
+    border-top: 1px solid var(--border-soft);
+    padding-top: 10px;
+  }
+  .settings-advanced > summary {
+    margin-bottom: 10px;
+    color: var(--muted);
+    font-size: 0.8125rem;
+    font-weight: 600;
+    cursor: pointer;
   }
   .field-label {
     display: block;
@@ -1181,9 +1235,21 @@
     flex-wrap: wrap;
     gap: 8px;
   }
-  .search-panels {
+  .search-section {
     display: grid;
     gap: 14px;
+  }
+  .search-section-head h2 {
+    margin: 0;
+    color: var(--text);
+    font-size: 0.9375rem;
+    font-weight: 600;
+  }
+  .search-section-head p {
+    margin: 4px 0 0;
+    color: var(--muted);
+    font-size: 0.8125rem;
+    line-height: 1.5;
   }
   .search-panel {
     border: 1px solid var(--border-soft);

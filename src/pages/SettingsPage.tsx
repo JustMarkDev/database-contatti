@@ -4,6 +4,7 @@ import {
   AlertDiamondIcon,
   DatabaseIcon,
   Download01Icon,
+  GlobalSearchIcon,
   Refresh01Icon,
   SparklesIcon,
   Upload01Icon,
@@ -31,6 +32,13 @@ import {
   SelectTrigger,
   SelectValue,
 } from "../components/ui/select";
+import {
+  loadExplorePrefs,
+  PAGES_PER_SITE_OPTIONS,
+  saveExplorePrefs,
+  SCHOOL_PDF_OPTIONS,
+  type ExplorePrefs,
+} from "../features/explorePrefs";
 import {
   EFFORT_LEVELS,
   loadOpenCodePrefs,
@@ -165,13 +173,32 @@ function ApiKeyForm({
   );
 }
 
-function ProvidersCard({ active }: { active: boolean }) {
+function RefreshButton({ loading, onClick }: { loading: boolean; onClick: () => void }) {
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      className="ml-auto"
+      onClick={onClick}
+      disabled={loading}
+    >
+      <HugeiconsIcon
+        icon={Refresh01Icon}
+        size={16}
+        strokeWidth={1.75}
+        color="currentColor"
+        className="size-4"
+      />
+      {loading ? "Verifica…" : "Ricontrolla"}
+    </Button>
+  );
+}
+
+function AiProvidersCard({ active }: { active: boolean }) {
   const [opencode, setOpencode] = useState<OpenCodeStatus | null>(null);
   const [typesafe, setTypesafe] = useState<TypeSafeStatus | null>(null);
   const [key, setKey] = useState<TypeSafeKeyView | null>(null);
-  const [contextdevKey, setContextdevKey] = useState<TypeSafeKeyView | null>(null);
-  const [contextdev, setContextdev] = useState<ContextDevSettings | null>(null);
-  const [usage, setUsage] = useState<ContextDevUsage | null>(null);
   const [loading, setLoading] = useState(true);
   const [prefs, setPrefs] = useState<OpenCodePrefs>(loadOpenCodePrefs);
 
@@ -186,9 +213,6 @@ function ProvidersCard({ active }: { active: boolean }) {
       detectOpencode().then(setOpencode, () => setOpencode(null)),
       detectTypesafe().then(setTypesafe, () => setTypesafe(null)),
       getTypesafeApiKey().then(setKey, () => setKey(null)),
-      getContextdevApiKey().then(setContextdevKey, () => setContextdevKey(null)),
-      getContextdevSettings().then(setContextdev, () => setContextdev(null)),
-      getContextdevUsage().then(setUsage, () => setUsage(null)),
     ]);
     setLoading(false);
   }, []);
@@ -209,27 +233,6 @@ function ProvidersCard({ active }: { active: boolean }) {
     }
   }
 
-  async function saveContextdev(next: ContextDevSettings) {
-    try {
-      setContextdev(await setContextdevSettings(next));
-      setUsage(await getContextdevUsage().catch(() => null));
-    } catch (error) {
-      toast.error(String(error));
-    }
-  }
-
-  async function saveContextdevKey(value: string) {
-    try {
-      setContextdevKey(await setContextdevApiKey(value));
-      setUsage(await getContextdevUsage().catch(() => null));
-      toast.success(value ? "Chiave context.dev salvata." : "Chiave context.dev rimossa.");
-      return true;
-    } catch (error) {
-      toast.error(String(error));
-      return false;
-    }
-  }
-
   return (
     <Card className="island-section settings-panel">
       <CardHeader>
@@ -242,27 +245,10 @@ function ProvidersCard({ active }: { active: boolean }) {
             className="size-5 text-brand"
           />
           <span>Provider IA</span>
-          <Button
-            type="button"
-            variant="outline"
-            size="sm"
-            className="ml-auto"
-            onClick={() => void refresh()}
-            disabled={loading}
-          >
-            <HugeiconsIcon
-              icon={Refresh01Icon}
-              size={16}
-              strokeWidth={1.75}
-              color="currentColor"
-              className="size-4"
-            />
-            {loading ? "Verifica…" : "Ricontrolla"}
-          </Button>
+          <RefreshButton loading={loading} onClick={() => void refresh()} />
         </CardTitle>
         <CardDescription>
-          Stato dei provider usati per la classificazione e la ricerca web. Le chiavi restano sul
-          tuo computer.
+          Stato dei provider usati per la classificazione. Le chiavi restano sul tuo computer.
         </CardDescription>
       </CardHeader>
       <CardContent className="flex flex-col gap-3">
@@ -355,8 +341,80 @@ function ProvidersCard({ active }: { active: boolean }) {
             onSave={saveKey}
           />
         </ProviderRow>
+      </CardContent>
+    </Card>
+  );
+}
+
+function ContextdevCard({ active }: { active: boolean }) {
+  const [contextdevKey, setContextdevKey] = useState<TypeSafeKeyView | null>(null);
+  const [contextdev, setContextdev] = useState<ContextDevSettings | null>(null);
+  const [usage, setUsage] = useState<ContextDevUsage | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [explore, setExplore] = useState<ExplorePrefs>(loadExplorePrefs);
+
+  function updateExplore(next: ExplorePrefs) {
+    setExplore(next);
+    saveExplorePrefs(next);
+  }
+
+  const refresh = useCallback(async () => {
+    setLoading(true);
+    await Promise.all([
+      getContextdevApiKey().then(setContextdevKey, () => setContextdevKey(null)),
+      getContextdevSettings().then(setContextdev, () => setContextdev(null)),
+      getContextdevUsage().then(setUsage, () => setUsage(null)),
+    ]);
+    setLoading(false);
+  }, []);
+
+  useEffect(() => {
+    if (active) void refresh();
+  }, [active, refresh]);
+
+  async function saveContextdev(next: ContextDevSettings) {
+    try {
+      setContextdev(await setContextdevSettings(next));
+      setUsage(await getContextdevUsage().catch(() => null));
+    } catch (error) {
+      toast.error(String(error));
+    }
+  }
+
+  async function saveContextdevKey(value: string) {
+    try {
+      setContextdevKey(await setContextdevApiKey(value));
+      setUsage(await getContextdevUsage().catch(() => null));
+      toast.success(value ? "Chiave context.dev salvata." : "Chiave context.dev rimossa.");
+      return true;
+    } catch (error) {
+      toast.error(String(error));
+      return false;
+    }
+  }
+
+  return (
+    <Card className="island-section settings-panel">
+      <CardHeader>
+        <CardTitle className="flex items-center gap-2">
+          <HugeiconsIcon
+            icon={GlobalSearchIcon}
+            size={20}
+            strokeWidth={1.75}
+            color="currentColor"
+            className="size-5 text-brand"
+          />
+          <span>Ricerca e lettura dei siti</span>
+          <RefreshButton loading={loading} onClick={() => void refresh()} />
+        </CardTitle>
+        <CardDescription>
+          context.dev trova e legge i siti pubblici da cui raccogliere le email. Ogni pagina letta
+          costa crediti.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
         <ProviderRow
-          name="context.dev (ricerca web)"
+          name="context.dev"
           error={usage?.problem}
           badges={[
             {
@@ -399,71 +457,118 @@ function ProvidersCard({ active }: { active: boolean }) {
             onSave={saveContextdevKey}
           />
           {contextdev && (
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="flex flex-col gap-1 text-sm">
-                Piano context.dev
-                <Select
-                  value={String(contextdev.concurrency)}
-                  onValueChange={(value) =>
-                    void saveContextdev({ ...contextdev, concurrency: Number(value) })
-                  }
-                >
-                  <SelectTrigger aria-label="Piano context.dev">
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent>
-                    {CONTEXTDEV_PLANS.map((plan) => (
-                      <SelectItem key={plan.value} value={String(plan.value)}>
-                        {plan.label}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </label>
-              <label className="flex items-center gap-2 text-sm">
-                <input
-                  type="checkbox"
-                  checked={contextdev.maps_enabled}
-                  onChange={(event) =>
-                    void saveContextdev({
-                      ...contextdev,
-                      maps_enabled: event.currentTarget.checked,
-                    })
-                  }
-                />
-                Cerca i siti anche su Google Maps (costo da misurare)
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                Riserva di crediti (mai spesi)
-                <Input
-                  key={`reserve-${contextdev.reserve}`}
-                  type="number"
-                  min={0}
-                  aria-label="Riserva di crediti context.dev"
-                  defaultValue={contextdev.reserve}
-                  onBlur={(event) => {
-                    const reserve = Math.max(0, Number(event.currentTarget.value) || 0);
-                    if (reserve !== contextdev.reserve)
-                      void saveContextdev({ ...contextdev, reserve });
-                  }}
-                />
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                Crediti al massimo per ricerca (0: nessun tetto)
-                <Input
-                  key={`cap-${contextdev.max_credits_per_run}`}
-                  type="number"
-                  min={0}
-                  aria-label="Crediti al massimo per ricerca"
-                  defaultValue={contextdev.max_credits_per_run}
-                  onBlur={(event) => {
-                    const cap = Math.max(0, Number(event.currentTarget.value) || 0);
-                    if (cap !== contextdev.max_credits_per_run)
-                      void saveContextdev({ ...contextdev, max_credits_per_run: cap });
-                  }}
-                />
-              </label>
-            </div>
+            <>
+              <div className="grid gap-3 sm:grid-cols-2">
+                <label className="flex flex-col gap-1 text-sm">
+                  Piano context.dev
+                  <Select
+                    value={String(contextdev.concurrency)}
+                    onValueChange={(value) =>
+                      void saveContextdev({ ...contextdev, concurrency: Number(value) })
+                    }
+                  >
+                    <SelectTrigger aria-label="Piano context.dev">
+                      <SelectValue />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {CONTEXTDEV_PLANS.map((plan) => (
+                        <SelectItem key={plan.value} value={String(plan.value)}>
+                          {plan.label}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                </label>
+                <label className="flex h-8 items-center gap-2 self-end text-sm">
+                  <input
+                    type="checkbox"
+                    checked={contextdev.maps_enabled}
+                    onChange={(event) =>
+                      void saveContextdev({
+                        ...contextdev,
+                        maps_enabled: event.currentTarget.checked,
+                      })
+                    }
+                  />
+                  Cerca i siti anche su Google Maps (costo da misurare)
+                </label>
+              </div>
+              <details className="settings-advanced">
+                <summary>Impostazioni avanzate</summary>
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="flex flex-col gap-1 text-sm">
+                    Pagine per sito (1 credito ciascuna, più 1 per la mappa del sito)
+                    <Select
+                      value={String(explore.pagesPerSite)}
+                      onValueChange={(value) =>
+                        updateExplore({ ...explore, pagesPerSite: Number(value) })
+                      }
+                    >
+                      <SelectTrigger aria-label="Pagine per sito">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {PAGES_PER_SITE_OPTIONS.map((value) => (
+                          <SelectItem key={value} value={String(value)}>
+                            {value}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </label>
+                  <label className="flex flex-col gap-1 text-sm">
+                    PDF per sito di scuola (circolari con i referenti)
+                    <Select
+                      value={String(explore.schoolPdfs)}
+                      onValueChange={(value) =>
+                        updateExplore({ ...explore, schoolPdfs: Number(value) })
+                      }
+                    >
+                      <SelectTrigger aria-label="PDF per sito di scuola">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {SCHOOL_PDF_OPTIONS.map((value) => (
+                          <SelectItem key={value} value={String(value)}>
+                            {value}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                  </label>
+                  <label className="flex flex-col gap-1 text-sm">
+                    Riserva di crediti (mai spesi)
+                    <Input
+                      key={`reserve-${contextdev.reserve}`}
+                      type="number"
+                      min={0}
+                      aria-label="Riserva di crediti context.dev"
+                      defaultValue={contextdev.reserve}
+                      onBlur={(event) => {
+                        const reserve = Math.max(0, Number(event.currentTarget.value) || 0);
+                        if (reserve !== contextdev.reserve)
+                          void saveContextdev({ ...contextdev, reserve });
+                      }}
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1 text-sm">
+                    Crediti al massimo per ricerca (0: nessun tetto)
+                    <Input
+                      key={`cap-${contextdev.max_credits_per_run}`}
+                      type="number"
+                      min={0}
+                      aria-label="Crediti al massimo per ricerca"
+                      defaultValue={contextdev.max_credits_per_run}
+                      onBlur={(event) => {
+                        const cap = Math.max(0, Number(event.currentTarget.value) || 0);
+                        if (cap !== contextdev.max_credits_per_run)
+                          void saveContextdev({ ...contextdev, max_credits_per_run: cap });
+                      }}
+                    />
+                  </label>
+                </div>
+              </details>
+            </>
           )}
         </ProviderRow>
       </CardContent>
@@ -616,7 +721,7 @@ export function SettingsPage({
           <div>
             <h1>Impostazioni</h1>
             <p className="topbar-description">
-              Provider IA, backup, ripristino e manutenzione dell'archivio locale.
+              Provider IA, ricerca dei siti, backup e manutenzione dell'archivio locale.
             </p>
           </div>
         </header>
@@ -676,7 +781,9 @@ export function SettingsPage({
         </CardContent>
       </Card>
 
-      <ProvidersCard active={active} />
+      <AiProvidersCard active={active} />
+
+      <ContextdevCard active={active} />
 
       <Card className="island-section settings-panel">
         <details>

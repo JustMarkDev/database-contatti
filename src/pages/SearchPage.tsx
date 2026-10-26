@@ -36,6 +36,7 @@ import {
   TableHeader,
   TableRow,
 } from "../components/ui/table";
+import { loadExplorePrefs } from "../features/explorePrefs";
 import { platform } from "../platform";
 import type {
   ChannelYield,
@@ -59,10 +60,6 @@ import type {
  */
 
 const PAGE_SIZE = 100;
-/** Pages read per site, the home included: each one is a context.dev credit. */
-const PAGES_PER_SITE_OPTIONS = [1, 2, 3, 4, 5, 6];
-/** PDFs per school site (role circolari): each one is at least a credit. */
-const SCHOOL_PDF_OPTIONS = [0, 1, 2];
 const SITES_PER_RUN = 50;
 /** Organizations known only by name searched per click (one credit each). */
 const SITES_TO_FIND = 50;
@@ -189,6 +186,27 @@ function leadSections(lead: SearchLeadView): DetailSection[] {
   ];
 }
 
+/** A page section with its own heading, divided from the others by the island hairlines. */
+function Step({
+  title,
+  description,
+  children,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+}) {
+  return (
+    <section className="island-section search-section" aria-label={title}>
+      <header className="search-section-head">
+        <h2>{title}</h2>
+        <p>{description}</p>
+      </header>
+      {children}
+    </section>
+  );
+}
+
 function Panel({
   title,
   description,
@@ -265,8 +283,6 @@ export function SearchPage({
   const [directories, setDirectories] = useState<LeadDirectory[] | null>(null);
   const [seedLists, setSeedLists] = useState<SeedListView[]>([]);
   const [mapsEnabled, setMapsEnabled] = useState(false);
-  const [pagesPerSite, setPagesPerSite] = useState(3);
-  const [schoolPdfs, setSchoolPdfs] = useState(0);
   const [yields, setYields] = useState<ChannelYield[]>([]);
 
   const [query, setQuery] = useState("");
@@ -465,6 +481,7 @@ export function SearchPage({
 
   /** Reads pending sites of one list or matching a plan; nothing pending is not an error here. */
   async function readList(listName: string | null, plan?: LeadPlan) {
+    const { pagesPerSite, schoolPdfs } = loadExplorePrefs();
     try {
       return await exploreSeeds({
         listName,
@@ -523,8 +540,7 @@ export function SearchPage({
       });
     }
     return items;
-    // readList reads the page settings when it runs.
-  }, [directories, seedLists, pagesPerSite, schoolPdfs]);
+  }, [directories, seedLists]);
 
   function togglePlace(key: string) {
     setPicked((previous) => {
@@ -535,6 +551,7 @@ export function SearchPage({
   }
 
   async function readPlaces() {
+    const { pagesPerSite, schoolPdfs } = loadExplorePrefs();
     const chosen = places.filter((place) => picked.has(place.key));
     let sites = 0;
     let credits = 0;
@@ -700,171 +717,145 @@ export function SearchPage({
         </div>
       )}
 
-      <div className="island-section search-panels">
-        <>
-          <Panel
-            title="Cosa vuoi trovare?"
-            description="Scrivilo con parole tue: l'IA sceglie gli elenchi, legge i siti e cerca anche sul web."
-            open
-          >
-            <div className="search-query-block">
-              <div className="search-query-row">
-                <div className="search-field">
-                  <Icon name="search" size={16} className="search-field-icon" />
-                  <Input
-                    className="h-10 pl-9 text-sm"
-                    value={query}
-                    onChange={(event) => setQuery(event.currentTarget.value)}
-                    onKeyDown={(event) => {
-                      if (event.key === "Enter" && !working) void startRequest();
-                    }}
-                    placeholder="Scrivi cosa cerchi, per esempio tutte le pro loco della Lombardia"
-                    aria-label="Descrizione della ricerca lead"
-                  />
-                </div>
-                <Button
-                  className="h-10 px-4"
-                  onClick={() => void startRequest()}
-                  disabled={working || !query.trim()}
-                >
-                  <Icon name="sparkle" size={16} className="size-4" />
-                  Cerca
-                </Button>
-              </div>
-            </div>
-          </Panel>
-
-          <Panel
-            title="Usa i siti già pubblici"
-            description="Scegli dove cercare: l'app legge quei siti con l'IA e raccoglie le email."
-            open
-          >
-            <ul className="search-sources">
-              {places.map((place) => (
-                <SourceCard key={place.key} title={place.title} note={place.meta}>
-                  <label>
-                    <input
-                      type="checkbox"
-                      checked={picked.has(place.key)}
-                      onChange={() => togglePlace(place.key)}
-                      disabled={working}
-                    />
-                    Usa questo elenco
-                  </label>
-                </SourceCard>
-              ))}
-            </ul>
-            <div className="grid gap-3 sm:grid-cols-2">
-              <label className="flex flex-col gap-1 text-sm">
-                Pagine per sito (1 credito ciascuna, più 1 per la mappa del sito)
-                <select
-                  aria-label="Pagine per sito"
-                  value={pagesPerSite}
-                  onChange={(event) => setPagesPerSite(Number(event.currentTarget.value))}
-                  disabled={working}
-                >
-                  {PAGES_PER_SITE_OPTIONS.map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <label className="flex flex-col gap-1 text-sm">
-                PDF per sito di scuola (circolari con i referenti)
-                <select
-                  aria-label="PDF per sito di scuola"
-                  value={schoolPdfs}
-                  onChange={(event) => setSchoolPdfs(Number(event.currentTarget.value))}
-                  disabled={working}
-                >
-                  {SCHOOL_PDF_OPTIONS.map((value) => (
-                    <option key={value} value={value}>
-                      {value}
-                    </option>
-                  ))}
-                </select>
-              </label>
+      <Step
+        title="Cosa vuoi trovare?"
+        description="Scrivilo con parole tue: l'IA sceglie gli elenchi, legge i siti e cerca anche sul web."
+      >
+        <div className="search-query-block">
+          <div className="search-query-row">
+            <div className="search-field">
+              <Icon name="search" size={16} className="search-field-icon" />
+              <Input
+                className="h-10 pl-9 text-sm"
+                value={query}
+                onChange={(event) => setQuery(event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" && !working) void startRequest();
+                }}
+                placeholder="Scrivi cosa cerchi, per esempio tutte le pro loco della Lombardia"
+                aria-label="Descrizione della ricerca lead"
+              />
             </div>
             <Button
-              onClick={() => void readPlaces()}
-              disabled={working || picked.size === 0}
-              className="justify-self-start"
+              className="h-10 px-4"
+              onClick={() => void startRequest()}
+              disabled={working || !query.trim()}
             >
               <Icon name="sparkle" size={16} className="size-4" />
-              Leggi i siti scelti
+              Cerca
             </Button>
-            {seedLists.some((list) => list.without_site > 0) && (
-              <ul className="search-sources" aria-label="Enti senza sito">
-                {seedLists
-                  .filter((list) => list.without_site > 0)
-                  .map((list) => (
-                    <SourceCard
-                      key={`find:${list.list_name}`}
-                      title={`${list.list_name}: enti senza sito`}
-                      note={`${list.without_site.toLocaleString("it-IT")} enti noti solo per nome: la ricerca web trova il sito e lo controlla prima di leggerlo`}
-                    >
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        onClick={() => findSites(list)}
-                        disabled={working}
-                        aria-label={`Trova i siti di ${list.list_name}`}
-                      >
-                        Trova i siti
-                      </Button>
-                    </SourceCard>
-                  ))}
-              </ul>
-            )}
+          </div>
+        </div>
+      </Step>
+
+      {seedLists.some((list) => list.without_site > 0) && (
+        <Step
+          title="1 · Trova i siti"
+          description="Enti noti solo per nome: la ricerca web trova il loro sito e lo controlla prima che tu lo legga."
+        >
+          <ul className="search-sources" aria-label="Enti senza sito">
+            {seedLists
+              .filter((list) => list.without_site > 0)
+              .map((list) => (
+                <SourceCard
+                  key={`find:${list.list_name}`}
+                  title={`${list.list_name}: enti senza sito`}
+                  note={`${list.without_site.toLocaleString("it-IT")} enti noti solo per nome: la ricerca web trova il sito e lo controlla prima di leggerlo`}
+                >
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => findSites(list)}
+                    disabled={working}
+                    aria-label={`Trova i siti di ${list.list_name}`}
+                  >
+                    Trova i siti
+                  </Button>
+                </SourceCard>
+              ))}
+          </ul>
+        </Step>
+      )}
+
+      <Step
+        title="2 · Leggi i siti"
+        description="Scegli gli elenchi da leggere: l'app apre quei siti con l'IA e raccoglie le email."
+      >
+        <ul className="search-sources">
+          {places.map((place) => (
+            <SourceCard key={place.key} title={place.title} note={place.meta}>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={picked.has(place.key)}
+                  onChange={() => togglePlace(place.key)}
+                  disabled={working}
+                />
+                Usa questo elenco
+              </label>
+            </SourceCard>
+          ))}
+        </ul>
+        <Button
+          onClick={() => void readPlaces()}
+          disabled={working || picked.size === 0}
+          className="justify-self-start"
+        >
+          <Icon name="sparkle" size={16} className="size-4" />
+          Leggi i siti scelti
+        </Button>
+      </Step>
+
+      {yields.length > 0 && (
+        <div className="island-section">
+          <Panel
+            title="Resa delle fonti di siti nuovi"
+            description="Crediti spesi per trovare e leggere i siti di ogni fonte, e indirizzi nuovi trovati."
+          >
+            <Table aria-label="Resa per fonte">
+              <TableHeader>
+                <TableRow>
+                  <TableHead>fonte</TableHead>
+                  <TableHead>siti</TableHead>
+                  <TableHead>crediti</TableHead>
+                  <TableHead>email nuove</TableHead>
+                  <TableHead>crediti per email</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {yields.map((row) => {
+                  const spent = row.discovery_credits + row.reading_credits;
+                  return (
+                    <TableRow key={row.channel}>
+                      <TableCell>{row.channel}</TableCell>
+                      <TableCell className="cell-num">
+                        {row.seeds.toLocaleString("it-IT")}
+                      </TableCell>
+                      <TableCell className="cell-num">{spent.toLocaleString("it-IT")}</TableCell>
+                      <TableCell className="cell-num">
+                        {row.new_emails.toLocaleString("it-IT")}
+                      </TableCell>
+                      <TableCell className="cell-num">
+                        {row.new_emails
+                          ? (spent / row.new_emails).toLocaleString("it-IT", {
+                              maximumFractionDigits: 1,
+                            })
+                          : "—"}
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
           </Panel>
+        </div>
+      )}
 
-          {yields.length > 0 && (
-            <Panel
-              title="Resa delle fonti di siti nuovi"
-              description="Crediti spesi per trovare e leggere i siti di ogni fonte, e indirizzi nuovi trovati."
-            >
-              <Table aria-label="Resa per fonte">
-                <TableHeader>
-                  <TableRow>
-                    <TableHead>fonte</TableHead>
-                    <TableHead>siti</TableHead>
-                    <TableHead>crediti</TableHead>
-                    <TableHead>email nuove</TableHead>
-                    <TableHead>crediti per email</TableHead>
-                  </TableRow>
-                </TableHeader>
-                <TableBody>
-                  {yields.map((row) => {
-                    const spent = row.discovery_credits + row.reading_credits;
-                    return (
-                      <TableRow key={row.channel}>
-                        <TableCell>{row.channel}</TableCell>
-                        <TableCell className="cell-num">
-                          {row.seeds.toLocaleString("it-IT")}
-                        </TableCell>
-                        <TableCell className="cell-num">{spent.toLocaleString("it-IT")}</TableCell>
-                        <TableCell className="cell-num">
-                          {row.new_emails.toLocaleString("it-IT")}
-                        </TableCell>
-                        <TableCell className="cell-num">
-                          {row.new_emails
-                            ? (spent / row.new_emails).toLocaleString("it-IT", {
-                                maximumFractionDigits: 1,
-                              })
-                            : "—"}
-                        </TableCell>
-                      </TableRow>
-                    );
-                  })}
-                </TableBody>
-              </Table>
-            </Panel>
-          )}
-        </>
-      </div>
-
-      <div className="island-section">
+      <div className="island-section search-section">
+        <header className="search-section-head">
+          <h2>Lead trovati</h2>
+          <p>Filtra, controlla ed esporta i lead prima di aggiungerli al database.</p>
+        </header>
         <div className="filter-bar-row">
           <div className="search-field" role="search">
             <Icon name="search" size={16} className="search-field-icon" />
