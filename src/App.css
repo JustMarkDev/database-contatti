@@ -1188,6 +1188,13 @@
   .search-query-row .search-field {
     flex: 1 1 auto;
   }
+  .search-select {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .search-select-wide {
+    flex: 2 1 0;
+  }
   .search-sources {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));

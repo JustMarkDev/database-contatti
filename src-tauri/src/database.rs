@@ -21,6 +21,21 @@ pub(crate) async fn blocking<T: Send + 'static>(
         .map_err(|error| format!("Operazione interrotta: {error}"))?
 }
 
+/// For writes that follow paid work (context.dev credits): a busy pool is waited
+/// out instead of throwing the result away. Each attempt already waits
+/// `DB_CHECKOUT_TIMEOUT`, so ten attempts are about five minutes.
+pub(crate) async fn blocking_patient<T: Send + 'static>(
+    work: impl Fn() -> Result<T, String> + Send + Clone + 'static,
+) -> Result<T, String> {
+    let mut busy = 0;
+    loop {
+        match blocking(work.clone()).await {
+            Err(error) if error.starts_with("Database occupato") && busy < 10 => busy += 1,
+            other => return other,
+        }
+    }
+}
+
 struct DatabasePool {
     available: Mutex<Vec<Connection>>,
     returned: Condvar,

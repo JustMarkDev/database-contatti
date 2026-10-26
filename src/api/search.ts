@@ -13,6 +13,7 @@ import type {
   SearchRunSummary,
   SearchRunView,
   SeedListView,
+  SubcategoryCoverage,
   TypeSafeKeyView,
 } from "../types";
 
@@ -83,6 +84,10 @@ export const deleteSearchRun = (runId: string) => invoke<void>("delete_search_ru
 export const listLeadDirectories = () => invoke<LeadDirectory[]>("list_lead_directories");
 
 export const listSeedLists = () => invoke<SeedListView[]>("list_seed_lists");
+
+/** Sites known, read and still to read per subcategory, optionally within one region. */
+export const listSubcategoryCoverage = (regione: string | null) =>
+  invoke<SubcategoryCoverage[]>("list_subcategory_coverage", { regione });
 
 /** Sites the run would read and the credits it may spend, before starting it. */
 export const estimateExplore = (request: ExploreRequest) =>

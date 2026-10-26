@@ -3,7 +3,6 @@ import {
   cancelLeadCrawl,
   discoverByMaps,
   discoverBySearch,
-  estimateExplore,
   exploreDirectory,
   exploreSeeds,
   exportSearchLeadsTxt,
@@ -16,6 +15,7 @@ import {
   listChannelYields,
   listSearchRuns,
   listSeedLists,
+  listSubcategoryCoverage,
   promoteSearchLeads,
 } from "../api/search";
 import { Button } from "../components/ui/button";
@@ -25,6 +25,7 @@ import { Card } from "../components/ui/card";
 import { Progress } from "../components/ui/progress";
 import { Icon } from "../components/Icon";
 import { MultiFilter } from "../components/MultiFilter";
+import { SingleSelect } from "../components/SingleSelect";
 import { DetailsSheet, type DetailSection } from "../components/ContactDetailsSheet";
 import { confirmDialog } from "../components/ui/confirm-dialog";
 import { toast } from "../components/ui/toast";
@@ -40,15 +41,16 @@ import { loadExplorePrefs } from "../features/explorePrefs";
 import { platform } from "../platform";
 import type {
   ChannelYield,
+  ContextDevSettings,
   CrawlProgress,
   FieldFilter,
   LeadFilterOptions,
   LeadFilters,
   LeadDirectory,
-  LeadPlan,
   SearchLeadView,
   SearchRunView,
   SeedListView,
+  SubcategoryCoverage,
 } from "../types";
 
 /**
@@ -56,17 +58,38 @@ import type {
  *
  * Directories, web search, Google Maps and site reads (all through
  * context.dev) land here first; **Aggiungi al database** promotes the
- * filtered leads into contacts. Sites to read are "seeds", grouped in lists.
+ * filtered leads into contacts. Sites to read are "seeds". A person picks one
+ * subcategory (Infanzia, CAI, Alpini...) and the page reads every known site of
+ * it that was not read yet; only when those run out does it look for more.
  */
 
 const PAGE_SIZE = 100;
-const SITES_PER_RUN = 50;
-/** Organizations known only by name searched per click (one credit each). */
-const SITES_TO_FIND = 50;
-/** Where web-search discoveries land (`lead_candidates::CHANNEL_SEARCH`). */
-const SEARCH_LIST = "Scoperta: ricerca web";
-/** Where Google Maps discoveries land (`lead_candidates::CHANNEL_MAPS`). */
-const MAPS_LIST = "Scoperta: Google Maps";
+/** Most sites one run reads (the backend's own ceiling); the credit cap lowers it. */
+const MAX_SITES_PER_RUN = 500;
+/** Organizations known only by name searched per batch (one credit each); the backend's ceiling. */
+const MAX_SITES_TO_FIND = 200;
+const REGIONI = [
+  "Abruzzo",
+  "Basilicata",
+  "Calabria",
+  "Campania",
+  "Emilia Romagna",
+  "Friuli Venezia Giulia",
+  "Lazio",
+  "Liguria",
+  "Lombardia",
+  "Marche",
+  "Molise",
+  "Piemonte",
+  "Puglia",
+  "Sardegna",
+  "Sicilia",
+  "Toscana",
+  "Trentino Alto Adige",
+  "Umbria",
+  "Valle d'Aosta",
+  "Veneto",
+];
 /** Every crawl reads pages with the IA: it is what finds roles, offices and places. */
 const USE_AI = true;
 
@@ -282,11 +305,14 @@ export function SearchPage({
 
   const [directories, setDirectories] = useState<LeadDirectory[] | null>(null);
   const [seedLists, setSeedLists] = useState<SeedListView[]>([]);
-  const [mapsEnabled, setMapsEnabled] = useState(false);
+  const [settings, setSettings] = useState<ContextDevSettings | null>(null);
   const [yields, setYields] = useState<ChannelYield[]>([]);
 
   const [query, setQuery] = useState("");
-  const [picked, setPicked] = useState<Set<string>>(() => new Set());
+  const [target, setTarget] = useState<{ category: string; subcategory: string } | null>(null);
+  const [regione, setRegione] = useState("");
+  const [coverage, setCoverage] = useState<SubcategoryCoverage[]>([]);
+  const mapsEnabled = settings?.maps_enabled ?? false;
 
   const generation = useRef(0);
   const mounted = useRef(true);
@@ -351,12 +377,15 @@ export function SearchPage({
       .then((value) => mounted.current && setSeedLists(value))
       .catch(report);
     void getContextdevSettings()
-      .then((value) => mounted.current && setMapsEnabled(value.maps_enabled))
+      .then((value) => mounted.current && setSettings(value))
+      .catch(report);
+    void listSubcategoryCoverage(regione || null)
+      .then((value) => mounted.current && setCoverage(value))
       .catch(report);
     void listChannelYields()
       .then((value) => mounted.current && setYields(value))
       .catch(report);
-  }, [active, refreshKey]);
+  }, [active, refreshKey, regione]);
 
   useEffect(() => {
     setOffset(0);
@@ -402,93 +431,81 @@ export function SearchPage({
     `${summary.lead_count.toLocaleString("it-IT")} lead` +
     (summary.page_count ? `, ${summary.page_count.toLocaleString("it-IT")} pagine lette` : "");
 
-  /** Free-form request: the IA picks directories and filters, then everything runs on its own. */
-  async function startRequest() {
+  const current = target
+    ? coverage.find(
+        (row) => row.category === target.category && row.subcategory === target.subcategory,
+      )
+    : undefined;
+  const isSchool = target?.category === "Istruzione";
+
+  /** The IA reads a free-form request into a type of ente and a region; nothing is spent. */
+  async function understand() {
     const trimmed = query.trim();
     if (!trimmed) {
       toast.error("Descrivi cosa cerchi.");
       return;
     }
-    stopped.current = false;
-    await perform("Ricerca guidata dall'IA", async () => {
+    await perform("Capisco la richiesta", async () => {
       const plan = await planLeadRequest(trimmed);
-      let totals: RunTotals = { lead_count: 0, page_count: 0 };
-      const problems: string[] = [];
-      const attempt = async (name: string, step: () => Promise<RunTotals | null>) => {
-        if (stopped.current) return;
-        try {
-          totals = addTotals(totals, await step());
-        } catch (error) {
-          problems.push(`${name}: ${String(error)}`);
-        }
-      };
-      for (const id of plan.source_ids) {
-        const entry = directories?.find((candidate) => candidate.id === id);
-        if (!entry) {
-          problems.push(`Elenco sconosciuto: ${id}`);
-          continue;
-        }
-        await attempt(entry.name, () => exploreDirectory({ sourceId: id, useAi: USE_AI }));
+      if (!plan.category || !plan.subcategory) {
+        toast.error("Non ho capito che tipo di ente cerchi: sceglilo dall'elenco.");
+        return null;
       }
-      await attempt("Siti già raccolti", () => readList(null, plan));
-      let newSites = 0;
-      await attempt("Ricerca sul web", async () => {
-        const report = await discoverBySearch({
-          query: plan.web_query,
-          category: plan.category,
-          subcategory: plan.subcategory,
-          regione: plan.regione,
-        });
-        newSites = report.accepted;
-        return report.accepted > 0 ? readList(SEARCH_LIST, plan) : null;
-      });
-      if (mapsEnabled && plan.subcategory && plan.regione) {
-        await attempt("Google Maps", async () => {
-          const report = await discoverByMaps({
-            category: plan.category,
-            subcategory: plan.subcategory,
-            regione: plan.regione,
-          });
-          newSites += report.accepted;
-          return report.accepted > 0 ? readList(MAPS_LIST, plan) : null;
-        });
-      }
-      if (mounted.current) {
-        setSearchText("");
-        setFilters({
-          ...emptyLeadFilters(),
-          category: { include: plan.category ? [plan.category] : [], exclude: [] },
-          subcategory: { include: plan.subcategory ? [plan.subcategory] : [], exclude: [] },
-          regione: { include: plan.regione ? [plan.regione] : [], exclude: [] },
-        });
-      }
-      if (problems.length > 0) toast.error(problems.join(" · "));
-      if (totals.lead_count === 0 && totals.page_count === 0 && problems.length === 0) {
-        throw new Error("Nessun risultato per questa richiesta.");
-      }
-      const found = newSites ? ` · ${newSites.toLocaleString("it-IT")} siti nuovi` : "";
-      return `Ricerca conclusa: ${runMessage(totals)}${found}`;
+      setTarget({ category: plan.category, subcategory: plan.subcategory });
+      setRegione(plan.regione ?? "");
+      return null;
     });
   }
 
-  /** Web search for the site of organizations known only by name, checked before reading. */
-  function findSites(list: SeedListView) {
+  function pickTarget(value: string) {
+    const [category, subcategory] = value.split("|");
+    setTarget(value ? { category, subcategory } : null);
+  }
+
+  /** Web search for the site of every organization of the list known only by name, batch after batch. */
+  async function findSites(list: SeedListView) {
+    const cap = settings?.max_credits_per_run ?? 0;
+    const batch = cap > 0 ? Math.min(MAX_SITES_TO_FIND, cap) : MAX_SITES_TO_FIND;
+    const confirmed = await confirmDialog({
+      title: `Cercare i siti di ${list.list_name}?`,
+      description: `${list.without_site.toLocaleString("it-IT")} enti senza sito: una ricerca web ciascuna, ≈ ${list.without_site.toLocaleString("it-IT")} crediti context.dev (con Google Maps acceso il costo di una ricerca non è documentato). Va avanti a lotti da ${batch.toLocaleString("it-IT")} finché gli enti finiscono; Ferma la interrompe.`,
+      actionLabel: "Cerca",
+    });
+    if (!confirmed) return;
+    stopped.current = false;
     void perform(`Ricerca dei siti di ${list.list_name}`, async () => {
-      const found = await findSeedSites(list.list_name, SITES_TO_FIND);
-      return `${list.list_name}: ${found.toLocaleString("it-IT")} siti trovati da leggere`;
+      let found = 0;
+      let left = list.without_site;
+      while (!stopped.current) {
+        try {
+          found += await findSeedSites(list.list_name, batch);
+        } catch (error) {
+          if (String(error).includes("Nessun ente senza sito")) break;
+          throw error;
+        }
+        const rows = await listSeedLists();
+        const now = rows.find((row) => row.list_name === list.list_name)?.without_site ?? 0;
+        // A batch that settled no organization would repeat forever: stop and say so.
+        const progressed = now < left;
+        left = now;
+        if (!left || !progressed) break;
+      }
+      const rest = left ? ` · ${left.toLocaleString("it-IT")} ancora senza sito` : "";
+      return `${list.list_name}: ${found.toLocaleString("it-IT")} siti trovati da leggere${rest}`;
     });
   }
 
-  /** Reads pending sites of one list or matching a plan; nothing pending is not an error here. */
-  async function readList(listName: string | null, plan?: LeadPlan) {
+  /** The next batch of unread sites of the picked subcategory; nothing left is not an error here. */
+  async function readBatch(limit: number) {
+    if (!target) return null;
     const { pagesPerSite, schoolPdfs } = loadExplorePrefs();
     try {
       return await exploreSeeds({
-        listName,
-        category: plan?.category,
-        subcategory: plan?.subcategory,
-        regione: plan?.regione,
-        limit: SITES_PER_RUN,
+        listName: null,
+        category: target.category,
+        subcategory: target.subcategory,
+        regione: regione || null,
+        limit,
         maxPages: pagesPerSite,
         maxPdfs: schoolPdfs,
         useAi: USE_AI,
@@ -499,102 +516,86 @@ export function SearchPage({
     }
   }
 
-  /** One checkbox of "Usa i siti già pubblici": what it reads when started. */
-  const places = useMemo(() => {
-    const chained = new Set<string>();
-    const items: {
-      key: string;
-      title: string;
-      meta: string;
-      /** The seed list it reads, for the estimate; directories add their own pages. */
-      list: string;
-      directory: boolean;
-      run: () => Promise<RunTotals | null>;
-    }[] = [];
-    for (const entry of directories ?? []) {
-      const list = `Elenco: ${entry.name}`;
-      chained.add(list);
-      items.push({
-        key: entry.id,
-        title: entry.name,
-        meta: entry.note,
-        list,
-        directory: true,
-        run: async () => {
-          const own = await exploreDirectory({ sourceId: entry.id, useAi: USE_AI });
-          return addTotals(own, await readList(list));
-        },
-      });
-    }
-    for (const list of seedLists) {
-      if (list.pending === 0 || chained.has(list.list_name)) continue;
-      items.push({
-        key: `list:${list.list_name}`,
-        title: list.list_name,
-        list: list.list_name,
-        directory: false,
-        meta:
-          `${list.pending.toLocaleString("it-IT")} siti ancora da leggere` +
-          (list.to_verify ? ` · ${list.to_verify.toLocaleString("it-IT")} da verificare` : ""),
-        run: () => readList(list.list_name),
-      });
-    }
-    return items;
-  }, [directories, seedLists]);
-
-  function togglePlace(key: string) {
-    setPicked((previous) => {
-      const next = new Set(previous);
-      if (!next.delete(key)) next.add(key);
-      return next;
-    });
-  }
-
-  async function readPlaces() {
+  /** Reads every unread site of the subcategory, batch after batch, until none is left. */
+  async function readSites() {
+    if (!target || !current) return;
     const { pagesPerSite, schoolPdfs } = loadExplorePrefs();
-    const chosen = places.filter((place) => picked.has(place.key));
-    let sites = 0;
-    let credits = 0;
-    try {
-      for (const place of chosen) {
-        const estimate = await estimateExplore({
-          listName: place.list,
-          limit: SITES_PER_RUN,
-          maxPages: pagesPerSite,
-          maxPdfs: schoolPdfs,
-          useAi: USE_AI,
-        });
-        sites += estimate.sites;
-        credits += estimate.max_credits;
-      }
-    } catch (error) {
-      toast.error(String(error));
-      return;
-    }
-    const lists = chosen.some((place) => place.directory)
-      ? " Gli elenchi aggiungono le loro pagine (1 credito ciascuna)."
-      : "";
+    const perSite = 1 + pagesPerSite + (isSchool ? schoolPdfs : 0);
+    const cap = settings?.max_credits_per_run ?? 0;
+    const limit =
+      cap > 0
+        ? Math.min(MAX_SITES_PER_RUN, Math.max(1, Math.floor(cap / perSite)))
+        : MAX_SITES_PER_RUN;
     const confirmed = await confirmDialog({
-      title: "Leggere i siti scelti?",
-      description: `≈ ${sites.toLocaleString("it-IT")} siti, al massimo ≈ ${credits.toLocaleString("it-IT")} crediti context.dev (Map + ${pagesPerSite} pagine per sito). La ricerca si ferma al tetto di crediti delle Impostazioni.${lists}`,
+      title: `Leggere i siti: ${target.subcategory}?`,
+      description: `≈ ${current.pending.toLocaleString("it-IT")} siti, al massimo ≈ ${(current.pending * perSite).toLocaleString("it-IT")} crediti context.dev (Map + ${pagesPerSite} pagine per sito). La lettura va avanti a lotti finché i siti finiscono; si ferma prima se premi Ferma o i crediti scendono alla riserva. I siti letti da meno di 30 giorni non si rileggono.`,
       actionLabel: "Leggi",
     });
     if (!confirmed) return;
     stopped.current = false;
-    void perform("Lettura dei siti scelti", async () => {
+    void perform(`Lettura dei siti: ${target.subcategory}`, async () => {
       let totals: RunTotals = { lead_count: 0, page_count: 0 };
-      const failed: string[] = [];
-      for (const place of chosen) {
-        if (stopped.current) break;
-        try {
-          totals = addTotals(totals, await place.run());
-        } catch (error) {
-          failed.push(`${place.title}: ${String(error)}`);
+      let left = current.pending;
+      while (!stopped.current) {
+        const part = await readBatch(limit);
+        if (!part) {
+          left = 0;
+          break;
         }
+        totals = addTotals(totals, part);
+        const rows = await listSubcategoryCoverage(regione || null);
+        const now = rows.find(
+          (row) => row.category === target.category && row.subcategory === target.subcategory,
+        )?.pending;
+        // A batch that read nothing new would repeat forever: stop and say so.
+        if (now === undefined || now >= left) break;
+        left = now;
       }
-      setPicked(new Set());
-      if (failed.length > 0) toast.error(failed.join(" · "));
-      return `Lettura conclusa: ${runMessage(totals)}`;
+      const rest = left ? ` · ${left.toLocaleString("it-IT")} ancora da leggere` : "";
+      return `Lettura conclusa: ${runMessage(totals)}${rest}`;
+    });
+  }
+
+  /** When the known sites are read: public lists of the subcategory, then a web search in the region. */
+  async function findMoreSites() {
+    if (!target || !regione) return;
+    const entries = (directories ?? []).filter(
+      (entry) => entry.category === target.category && entry.subcategory === target.subcategory,
+    );
+    const lists = entries.length
+      ? `Legge gli elenchi pubblici (${entries.map((entry) => entry.name).join(", ")}; 1 credito a pagina) e `
+      : "";
+    const confirmed = await confirmDialog({
+      title: `Cercare altri siti: ${target.subcategory}?`,
+      description: `${lists}cerca sul web «${target.subcategory}» in ${regione}: una ricerca per provincia, 1 credito ciascuna. I siti nuovi si aggiungono a quelli da leggere, poi premi Leggi i siti.`,
+      actionLabel: "Cerca",
+    });
+    if (!confirmed) return;
+    stopped.current = false;
+    void perform(`Ricerca di altri siti: ${target.subcategory}`, async () => {
+      let newSites = 0;
+      const problems: string[] = [];
+      const attempt = async (name: string, step: () => Promise<number>) => {
+        if (stopped.current) return;
+        try {
+          newSites += await step();
+        } catch (error) {
+          problems.push(`${name}: ${String(error)}`);
+        }
+      };
+      for (const entry of entries) {
+        await attempt(entry.name, async () => {
+          await exploreDirectory({ sourceId: entry.id, useAi: USE_AI });
+          return 0;
+        });
+      }
+      const scope = { category: target.category, subcategory: target.subcategory, regione };
+      await attempt("Ricerca sul web", async () => (await discoverBySearch(scope)).accepted);
+      if (mapsEnabled) {
+        await attempt("Google Maps", async () => (await discoverByMaps(scope)).accepted);
+      }
+      if (problems.length > 0) toast.error(problems.join(" · "));
+      return `${newSites.toLocaleString("it-IT")} siti nuovi da leggere`;
     });
   }
 
@@ -719,7 +720,7 @@ export function SearchPage({
 
       <Step
         title="Cosa vuoi trovare?"
-        description="Scrivilo con parole tue: l'IA sceglie gli elenchi, legge i siti e cerca anche sul web."
+        description="Scegli il tipo di ente, o scrivilo con parole tue e l'IA lo sceglie. L'app conosce già molti siti: li legge tutti e solo dopo ne cerca altri."
       >
         <div className="search-query-block">
           <div className="search-query-row">
@@ -730,27 +731,101 @@ export function SearchPage({
                 value={query}
                 onChange={(event) => setQuery(event.currentTarget.value)}
                 onKeyDown={(event) => {
-                  if (event.key === "Enter" && !working) void startRequest();
+                  if (event.key === "Enter" && !working) void understand();
                 }}
-                placeholder="Scrivi cosa cerchi, per esempio tutte le pro loco della Lombardia"
+                placeholder="Scrivi cosa cerchi, per esempio tutte le scuole dell'infanzia della Lombardia"
                 aria-label="Descrizione della ricerca lead"
               />
             </div>
             <Button
               className="h-10 px-4"
-              onClick={() => void startRequest()}
+              onClick={() => void understand()}
               disabled={working || !query.trim()}
             >
               <Icon name="sparkle" size={16} className="size-4" />
               Cerca
             </Button>
           </div>
+          <div className="search-query-row">
+            <div className="search-select search-select-wide">
+              <SingleSelect
+                label="Tipo di ente"
+                placeholder="Scegli il tipo di ente…"
+                searchPlaceholder="Cerca un tipo di ente…"
+                value={target ? `${target.category}|${target.subcategory}` : ""}
+                onChange={pickTarget}
+                disabled={working}
+                options={coverage.map((row) => ({
+                  value: `${row.category}|${row.subcategory}`,
+                  label: row.subcategory,
+                  count: row.sites,
+                  group: row.category,
+                }))}
+              />
+            </div>
+            <div className="search-select">
+              <SingleSelect
+                label="Regione da cercare"
+                placeholder="Tutta Italia"
+                searchPlaceholder="Cerca una regione…"
+                value={regione}
+                onChange={setRegione}
+                disabled={working}
+                options={[
+                  { value: "", label: "Tutta Italia" },
+                  ...REGIONI.map((name) => ({ value: name, label: name })),
+                ]}
+              />
+            </div>
+          </div>
         </div>
       </Step>
 
+      {target && current && (
+        <Step
+          title={`${target.subcategory} · ${regione || "tutta Italia"}`}
+          description="Quanti siti conosciamo e a che punto è la lettura."
+        >
+          <p aria-live="polite">
+            {current.sites.toLocaleString("it-IT")} siti noti ·{" "}
+            {current.crawled.toLocaleString("it-IT")} letti ·{" "}
+            {current.pending.toLocaleString("it-IT")} da leggere ·{" "}
+            {current.leads.toLocaleString("it-IT")} indirizzi trovati
+            {current.failed ? ` · ${current.failed.toLocaleString("it-IT")} non raggiungibili` : ""}
+            {current.to_verify
+              ? ` · ${current.to_verify.toLocaleString("it-IT")} da verificare`
+              : ""}
+          </p>
+          <Progress
+            value={((current.crawled + current.failed) / Math.max(1, current.sites)) * 100}
+            className="w-full"
+          />
+          <div className="actions-row">
+            <Button onClick={() => void readSites()} disabled={working || current.pending === 0}>
+              <Icon name="sparkle" size={16} className="size-4" />
+              Leggi i siti
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => void findMoreSites()}
+              disabled={working || current.pending > 0 || !regione}
+            >
+              Cerca altri siti
+            </Button>
+          </div>
+          <p className="search-source-note">
+            {current.pending > 0
+              ? "Prima si leggono i siti già noti; poi si può cercarne altri."
+              : !regione
+                ? "Per cercare altri siti scegli una regione."
+                : "Cerca negli elenchi pubblici e sul web in questa regione (usa crediti)."}
+          </p>
+        </Step>
+      )}
+
       {seedLists.some((list) => list.without_site > 0) && (
         <Step
-          title="1 · Trova i siti"
+          title="Trova i siti mancanti"
           description="Enti noti solo per nome: la ricerca web trova il loro sito e lo controlla prima che tu lo legga."
         >
           <ul className="search-sources" aria-label="Enti senza sito">
@@ -765,7 +840,7 @@ export function SearchPage({
                   <Button
                     variant="outline"
                     size="sm"
-                    onClick={() => findSites(list)}
+                    onClick={() => void findSites(list)}
                     disabled={working}
                     aria-label={`Trova i siti di ${list.list_name}`}
                   >
@@ -776,35 +851,6 @@ export function SearchPage({
           </ul>
         </Step>
       )}
-
-      <Step
-        title="2 · Leggi i siti"
-        description="Scegli gli elenchi da leggere: l'app apre quei siti con l'IA e raccoglie le email."
-      >
-        <ul className="search-sources">
-          {places.map((place) => (
-            <SourceCard key={place.key} title={place.title} note={place.meta}>
-              <label>
-                <input
-                  type="checkbox"
-                  checked={picked.has(place.key)}
-                  onChange={() => togglePlace(place.key)}
-                  disabled={working}
-                />
-                Usa questo elenco
-              </label>
-            </SourceCard>
-          ))}
-        </ul>
-        <Button
-          onClick={() => void readPlaces()}
-          disabled={working || picked.size === 0}
-          className="justify-self-start"
-        >
-          <Icon name="sparkle" size={16} className="size-4" />
-          Leggi i siti scelti
-        </Button>
-      </Step>
 
       {yields.length > 0 && (
         <div className="island-section">

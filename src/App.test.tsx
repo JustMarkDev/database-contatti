@@ -139,9 +139,13 @@ function defaultInvoke(command: string) {
       has_next: false,
     });
   if (
-    ["list_search_runs", "list_seed_lists", "list_lead_directories", "list_lead_taxonomy"].includes(
-      command,
-    )
+    [
+      "list_search_runs",
+      "list_seed_lists",
+      "list_subcategory_coverage",
+      "list_lead_directories",
+      "list_lead_taxonomy",
+    ].includes(command)
   )
     return Promise.resolve([]);
   if (command === "get_lead_filter_options")

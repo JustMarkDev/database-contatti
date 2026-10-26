@@ -203,6 +203,19 @@ export type SeedListView = {
   /** Not confidently classified or not confirmed: stored, never read. */
   to_verify: number;
 };
+/** What is known and read about one askable subcategory (catch-alls are never listed). */
+export type SubcategoryCoverage = {
+  category: string;
+  subcategory: string;
+  /** Distinct sites known, those waiting for a person to check them excluded. */
+  sites: number;
+  pending: number;
+  crawled: number;
+  failed: number;
+  to_verify: number;
+  /** Addresses found on the sites read. */
+  leads: number;
+};
 export type ContextDevSettings = {
   /** Requests in flight the plan allows (Free 2, Developer 10, Pro 100). */
   concurrency: number;

@@ -23,8 +23,8 @@ const SEARCH_TIMEOUT_MS: u64 = 30_000;
 const HTTP_TIMEOUT: Duration = Duration::from_secs(90);
 const MAP_MAX_LINKS: &str = "1000";
 const MAX_RETRY_AFTER: Duration = Duration::from_secs(60);
-/// Social and directory sites never hold an institution's own role mailboxes.
-pub(crate) const EXCLUDED_DOMAINS: [&str; 10] = [
+/// Social, directory and booking sites never hold an institution's own role mailboxes.
+pub(crate) const EXCLUDED_DOMAINS: [&str; 13] = [
     "facebook.com",
     "instagram.com",
     "youtube.com",
@@ -35,6 +35,9 @@ pub(crate) const EXCLUDED_DOMAINS: [&str; 10] = [
     "tripadvisor.it",
     "paginegialle.it",
     "paginebianche.it",
+    "booking.com",
+    "airbnb.com",
+    "airbnb.it",
 ];
 
 #[derive(Debug, Clone, PartialEq)]

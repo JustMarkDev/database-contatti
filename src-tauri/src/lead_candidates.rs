@@ -280,7 +280,8 @@ pub(crate) async fn accept_candidates(
         });
     }
     let list_name = list_name.to_owned();
-    let (inserted, held) = crate::database::blocking({
+    let (accepted, to_verify) = (std::sync::Arc::new(accepted), std::sync::Arc::new(to_verify));
+    let (inserted, held) = crate::database::blocking_patient({
         let app = app.clone();
         move || {
             let db = open_db(&app)?;
@@ -400,7 +401,8 @@ pub(crate) async fn discover_by_search(
     }
     let mut report = accept_candidates(&app, CHANNEL_SEARCH, candidates).await?;
     report.credits = context.credits_used();
-    crate::database::blocking(move || {
+    let errors = std::sync::Arc::new(errors);
+    crate::database::blocking_patient(move || {
         record_discovery(&*open_db(&app)?, CHANNEL_SEARCH, &report, &errors)
     })
     .await?;
@@ -565,7 +567,8 @@ pub(crate) async fn discover_by_maps(
     }
     let mut report = accept_candidates(&app, CHANNEL_MAPS, candidates).await?;
     report.credits = context.credits_used();
-    crate::database::blocking(move || {
+    let errors = std::sync::Arc::new(errors);
+    crate::database::blocking_patient(move || {
         record_discovery(&*open_db(&app)?, CHANNEL_MAPS, &report, &errors)
     })
     .await?;
@@ -867,6 +870,24 @@ mod tests {
         });
         assert_eq!(capped.len(), 3);
         assert!(search_queries(&SearchDiscoveryRequest::default()).is_empty());
+    }
+
+    #[test]
+    fn lead_candidates_booking_pages_are_never_an_organizations_site() {
+        let place = |website: &str| MapsPlace {
+            name: Some("Pro Loco Esempio".to_owned()),
+            city: Some("Esempio".to_owned()),
+            website: Some(website.to_owned()),
+            ..MapsPlace::default()
+        };
+        assert_eq!(
+            choose_maps_site(
+                "Pro Loco Esempio",
+                "Esempio",
+                &[place("https://www.booking.com/Share-abc")]
+            ),
+            SiteMatch::NotFound
+        );
     }
 
     #[test]

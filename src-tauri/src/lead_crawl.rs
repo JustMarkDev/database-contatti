@@ -213,6 +213,73 @@ pub(crate) fn seed_lists(db: &Connection) -> Result<Vec<SeedListView>, String> {
         .map_err(|error| error.to_string())
 }
 
+/// What is known and read about one subcategory: the page's "how far along" card.
+#[derive(Debug, Serialize, PartialEq)]
+pub(crate) struct SubcategoryCoverage {
+    pub(crate) category: String,
+    pub(crate) subcategory: String,
+    /// Distinct sites known, those waiting for a person to check them excluded.
+    pub(crate) sites: i64,
+    pub(crate) pending: i64,
+    pub(crate) crawled: i64,
+    pub(crate) failed: i64,
+    pub(crate) to_verify: i64,
+    /// Addresses found on the sites read.
+    pub(crate) leads: i64,
+}
+
+/// One row per askable subcategory (catch-alls left out), optionally within one region.
+pub(crate) fn subcategory_coverage(
+    db: &Connection,
+    regione: Option<&str>,
+) -> Result<Vec<SubcategoryCoverage>, String> {
+    let mut statement = db
+        .prepare(
+            "SELECT c.name, s.name,
+                    COUNT(DISTINCT CASE WHEN d.url IS NOT NULL AND d.status<>'verifica' THEN d.host END),
+                    COUNT(DISTINCT CASE WHEN d.url IS NOT NULL AND d.status='pending' THEN d.host END),
+                    COUNT(DISTINCT CASE WHEN d.status='crawled' THEN d.host END),
+                    COUNT(DISTINCT CASE WHEN d.status='failed' THEN d.host END),
+                    COUNT(DISTINCT CASE WHEN d.status='verifica' THEN d.host END),
+                    coalesce(SUM(CASE WHEN d.status='crawled' THEN d.lead_count END), 0)
+             FROM subcategories s JOIN categories c ON c.id=s.category_id
+             LEFT JOIN search_seeds d ON d.category=c.name AND d.subcategory=s.name
+                  AND (?1 IS NULL OR d.regione=?1)
+             GROUP BY c.name, s.name ORDER BY c.name, s.name",
+        )
+        .map_err(|error| error.to_string())?;
+    let rows = statement
+        .query_map(params![regione], |row| {
+            Ok(SubcategoryCoverage {
+                category: row.get(0)?,
+                subcategory: row.get(1)?,
+                sites: row.get(2)?,
+                pending: row.get(3)?,
+                crawled: row.get(4)?,
+                failed: row.get(5)?,
+                to_verify: row.get(6)?,
+                leads: row.get(7)?,
+            })
+        })
+        .map_err(|error| error.to_string())?
+        .collect::<Result<Vec<_>, _>>()
+        .map_err(|error| error.to_string())?;
+    Ok(rows
+        .into_iter()
+        .filter(|row| crate::lead_ai::is_target_subcategory(&row.category, &row.subcategory))
+        .collect())
+}
+
+#[tauri::command]
+pub(crate) async fn list_subcategory_coverage(
+    app: tauri::AppHandle,
+    regione: Option<String>,
+) -> Result<Vec<SubcategoryCoverage>, String> {
+    let regione = clean(regione);
+    crate::database::blocking(move || subcategory_coverage(&*open_db(&app)?, regione.as_deref()))
+        .await
+}
+
 /// Mail providers and shared hosting: their domain is never an organization's site.
 const PROVIDER_LABELS: [&str; 18] = [
     "pec",
@@ -918,8 +985,10 @@ pub(crate) async fn plan_lead_request(
     if request.is_empty() {
         return Err("Descrivi cosa cerchi.".to_owned());
     }
-    let taxonomy =
-        crate::database::blocking(move || crate::lead_ai::load_taxonomy(&*open_db(&app)?)).await?;
+    let taxonomy = crate::database::blocking(move || {
+        crate::lead_ai::load_taxonomy(&*open_db(&app)?).map(crate::lead_ai::target_taxonomy)
+    })
+    .await?;
     let ai = LeadAi::new(taxonomy).map_err(|error| format!("IA non disponibile: {error}"))?;
     let sources: Vec<_> = DIRECTORIES
         .iter()
@@ -1311,7 +1380,8 @@ pub(crate) async fn find_seed_sites(
         ..Default::default()
     };
     let stop = context.stop_reason();
-    let readable = crate::database::blocking(move || {
+    let (found, errors) = (std::sync::Arc::new(found), std::sync::Arc::new(errors));
+    let readable = crate::database::blocking_patient(move || {
         let db = open_db(&app)?;
         let readable = crate::lead_candidates::store_found_sites(&db, &found)?;
         let report = crate::lead_candidates::DiscoveryReport {
@@ -1341,6 +1411,43 @@ mod tests {
     use crate::discovery::FetchedPage;
     use crate::schema::setup_schema;
     use std::collections::HashMap;
+
+    #[test]
+    fn lead_crawl_coverage_counts_distinct_sites_per_subcategory_without_catch_alls() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_schema(&db).unwrap();
+        let now = "2026-09-29T10:00:00Z";
+        let seed = |url: &str, regione: &str| SeedRow {
+            url: Some(url.to_owned()),
+            name: None,
+            context: LeadContext {
+                category: Some("Istruzione".to_owned()),
+                subcategory: Some("Infanzia".to_owned()),
+                regione: Some(regione.to_owned()),
+                ..LeadContext::default()
+            },
+        };
+        // Two lists share a host: one site. One site is read, one waits.
+        insert_seeds(&db, "Base: Infanzia", &[seed("https://a.test", "Lombardia")], now).unwrap();
+        insert_seeds(&db, "Altro", &[seed("https://a.test", "Lombardia")], now).unwrap();
+        insert_seeds(&db, "Base: Infanzia", &[seed("https://b.test", "Veneto")], now).unwrap();
+        mark_host(&db, "a.test", "crawled", 7, None, now).unwrap();
+
+        let find = |rows: &[SubcategoryCoverage]| {
+            rows.iter()
+                .find(|row| row.subcategory == "Infanzia")
+                .map(|row| (row.sites, row.pending, row.crawled, row.leads))
+        };
+        assert_eq!(find(&subcategory_coverage(&db, None).unwrap()), Some((2, 1, 1, 14)));
+        assert_eq!(
+            find(&subcategory_coverage(&db, Some("Veneto")).unwrap()),
+            Some((1, 1, 0, 0))
+        );
+        let all = subcategory_coverage(&db, None).unwrap();
+        assert!(all.iter().all(|row| !row.subcategory.starts_with("Altro ")));
+        assert!(all.iter().all(|row| row.category != "Varie"));
+        assert!(all.iter().any(|row| row.subcategory == "Alpini"));
+    }
 
     #[test]
     fn lead_crawl_seed_urls_are_normalized_and_deduplicated_per_list() {

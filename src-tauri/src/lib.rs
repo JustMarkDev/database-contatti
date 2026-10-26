@@ -858,6 +858,7 @@ pub fn run() {
             discovery::promote_search_leads,
             lead_directories::list_lead_directories,
             lead_crawl::list_seed_lists,
+            lead_crawl::list_subcategory_coverage,
             lead_crawl::delete_seed_list,
             lead_crawl::add_contact_seeds,
             lead_crawl::add_seed_urls,

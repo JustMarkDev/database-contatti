@@ -27,6 +27,37 @@ const MAX_PAGE_CHARS: usize = 14_000;
 /// `(category, subcategories)` of the active taxonomy.
 pub(crate) type Taxonomy = Vec<(String, Vec<String>)>;
 
+/// Subcategories nobody asks for by name ("all the Altro ente formativo"): the
+/// leads worth finding are CAI, Alpini, Infanzia, never the catch-alls.
+pub(crate) fn is_target_subcategory(category: &str, subcategory: &str) -> bool {
+    category != "Varie"
+        && !subcategory.starts_with("Altro ")
+        && ![
+            "Ente non determinato",
+            "Dato misto o da revisionare",
+            "Associazione generica",
+            "Contatto personale",
+            "Fondazione",
+            "Culturale",
+        ]
+        .contains(&subcategory)
+}
+
+/// The taxonomy without the catch-all entries, as offered to people and to the planner.
+pub(crate) fn target_taxonomy(taxonomy: Taxonomy) -> Taxonomy {
+    taxonomy
+        .into_iter()
+        .map(|(category, subcategories)| {
+            let kept = subcategories
+                .into_iter()
+                .filter(|name| is_target_subcategory(&category, name))
+                .collect();
+            (category, kept)
+        })
+        .filter(|(_, subcategories): &(String, Vec<String>)| !subcategories.is_empty())
+        .collect()
+}
+
 pub(crate) fn load_taxonomy(db: &Connection) -> Result<Taxonomy, String> {
     let mut statement = db
         .prepare(

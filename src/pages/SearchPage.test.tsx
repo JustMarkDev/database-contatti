@@ -181,6 +181,29 @@ function defaultInvoke(command: string): Promise<unknown> {
           created_at: "2026-09-29T10:00:00Z",
         },
       ]);
+    case "list_subcategory_coverage":
+      return Promise.resolve([
+        {
+          category: "Associazioni",
+          subcategory: "CAI",
+          sites: 4,
+          pending: 0,
+          crawled: 4,
+          failed: 0,
+          to_verify: 0,
+          leads: 9,
+        },
+        {
+          category: "Istruzione",
+          subcategory: "Infanzia",
+          sites: 10,
+          pending: 6,
+          crawled: 3,
+          failed: 1,
+          to_verify: 0,
+          leads: 12,
+        },
+      ]);
     case "list_seed_lists":
       return Promise.resolve([
         {
@@ -214,6 +237,12 @@ function defaultInvoke(command: string): Promise<unknown> {
     default:
       return Promise.resolve({});
   }
+}
+
+/** Opens a searchable menu and picks the option whose name starts with `option`. */
+async function choose(field: string, option: string) {
+  await userEvent.click(screen.getByRole("button", { name: field }));
+  await userEvent.click(await screen.findByRole("option", { name: new RegExp(`^${option}`) }));
 }
 
 async function renderPage() {
@@ -290,51 +319,103 @@ describe("SearchPage", () => {
     expect(within(origin).getByText("Archivio web + IA")).toBeInTheDocument();
   });
 
-  it("reads the chosen public sites with the IA, chaining each list's sites", async () => {
+  const exploreCalls = () =>
+    invoke.mock.calls.filter(([command]) => command === "explore_seeds").map(([, args]) => args);
+  const coverageRow = (pending: number) => ({
+    category: "Istruzione",
+    subcategory: "Infanzia",
+    sites: 10,
+    pending,
+    crawled: 10 - pending,
+    failed: 0,
+    to_verify: 0,
+    leads: 12,
+  });
+
+  it("lists the askable types of ente with their known sites and shows how far the reading is", async () => {
     await renderPage();
-    const start = screen.getByRole("button", { name: "Leggi i siti scelti" });
-    expect(start).toBeDisabled();
-    await userEvent.click(
-      within(screen.getByText("CAI sezioni").closest("li")!).getByRole("checkbox"),
-    );
-    await userEvent.click(
-      within(screen.getByText("Fonte: OSM").closest("li")!).getByRole("checkbox"),
-    );
-    await userEvent.click(start);
-    const exploreCalls = () =>
-      invoke.mock.calls.filter(([command]) => command === "explore_seeds").map(([, args]) => args);
-    await waitFor(() => expect(exploreCalls()).toHaveLength(2));
-    expect(invoke).toHaveBeenCalledWith("explore_directory", {
-      request: { sourceId: "dir-cai", useAi: true },
+    await userEvent.click(screen.getByRole("button", { name: "Tipo di ente" }));
+    expect(await screen.findByRole("option", { name: /^CAI/ })).toHaveTextContent("CAI4");
+    const infanzia = screen.getByRole("option", { name: /^Infanzia/ });
+    expect(infanzia).toHaveTextContent("Infanzia10");
+    await userEvent.click(infanzia);
+    expect(
+      await screen.findByText(/10 siti noti · 3 letti · 6 da leggere · 12 indirizzi trovati/),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/1 non raggiungibili/)).toBeInTheDocument();
+  });
+
+  it("reads every unread site of the type of ente, batch after batch, until none is left", async () => {
+    let pending = 6;
+    invoke.mockImplementation((command: string) => {
+      if (command === "list_subcategory_coverage") return Promise.resolve([coverageRow(pending)]);
+      if (command === "explore_seeds") {
+        if (pending === 0) return Promise.reject("Nessun sito da esplorare in questo elenco");
+        pending = 0;
+        return Promise.resolve(run);
+      }
+      return defaultInvoke(command);
     });
-    const base = { limit: 50, maxPages: 3, maxPdfs: 0, useAi: true };
+    await renderPage();
+    await choose("Tipo di ente", "Infanzia");
+    await userEvent.click(await screen.findByRole("button", { name: "Leggi i siti" }));
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith("Lettura conclusa: 2 lead, 3 pagine lette"),
+    );
     expect(confirmDialog).toHaveBeenCalledWith(
       expect.objectContaining({
         description: expect.stringContaining("≈ 6 siti, al massimo ≈ 24 crediti"),
       }),
     );
-    expect(invoke).toHaveBeenCalledWith("estimate_explore", {
-      request: { ...base, listName: "Fonte: OSM" },
-    });
-    expect(exploreCalls()).toEqual([
-      { request: { ...base, listName: "Elenco: CAI sezioni" } },
-      { request: { ...base, listName: "Fonte: OSM" } },
-    ]);
+    const request = {
+      listName: null,
+      category: "Istruzione",
+      subcategory: "Infanzia",
+      regione: null,
+      limit: 500,
+      maxPages: 3,
+      maxPdfs: 0,
+      useAi: true,
+    };
+    expect(exploreCalls()).toEqual([{ request }, { request }]);
+  });
+
+  it("stops instead of repeating a batch that read nothing new", async () => {
+    await renderPage();
+    await choose("Tipo di ente", "Infanzia");
+    await userEvent.click(await screen.findByRole("button", { name: "Leggi i siti" }));
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining("6 ancora da leggere")),
+    );
+    expect(exploreCalls()).toHaveLength(1);
   });
 
   it("reads nothing when the estimate is declined, and uses the pages per site saved in Settings", async () => {
-    localStorage.setItem("explore_prefs", JSON.stringify({ pagesPerSite: 5, schoolPdfs: 0 }));
+    localStorage.setItem("explore_prefs", JSON.stringify({ pagesPerSite: 5, schoolPdfs: 1 }));
     await renderPage();
-    await userEvent.click(
-      within(screen.getByText("Fonte: OSM").closest("li")!).getByRole("checkbox"),
-    );
+    await choose("Tipo di ente", "Infanzia");
     confirmDialog.mockResolvedValueOnce(false);
-    await userEvent.click(screen.getByRole("button", { name: "Leggi i siti scelti" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Leggi i siti" }));
     await waitFor(() => expect(confirmDialog).toHaveBeenCalled());
-    expect(invoke).toHaveBeenCalledWith("estimate_explore", {
-      request: expect.objectContaining({ listName: "Fonte: OSM", maxPages: 5 }),
-    });
+    // 6 sites x (Map + 5 pages + 1 PDF of a school)
+    expect(confirmDialog).toHaveBeenCalledWith(
+      expect.objectContaining({ description: expect.stringContaining("≈ 42 crediti") }),
+    );
     expect(invoke).not.toHaveBeenCalledWith("explore_seeds", expect.anything());
+  });
+
+  it("sizes each batch so one run stays under the per-run credit cap", async () => {
+    invoke.mockImplementation((command: string) =>
+      command === "get_contextdev_settings"
+        ? Promise.resolve({ concurrency: 2, maps_enabled: false, max_credits_per_run: 100 })
+        : defaultInvoke(command),
+    );
+    await renderPage();
+    await choose("Tipo di ente", "Infanzia");
+    await userEvent.click(await screen.findByRole("button", { name: "Leggi i siti" }));
+    await waitFor(() => expect(exploreCalls()).toHaveLength(1));
+    // 100 credits / (Map + 3 pages)
+    expect(exploreCalls()[0]).toEqual({ request: expect.objectContaining({ limit: 25 }) });
   });
 
   it("shows the credits per new address of each discovery channel", async () => {
@@ -346,22 +427,16 @@ describe("SearchPage", () => {
     expect(cells).toEqual(["Scoperta: ricerca web", "2", "10", "4", "2,5"]);
   });
 
-  it("keeps reading the other chosen sites when one of them fails", async () => {
+  it("keeps looking for more sites when one public list fails", async () => {
     invoke.mockImplementation((command: string) =>
       command === "explore_directory" ? Promise.reject("HTTP 500") : defaultInvoke(command),
     );
     await renderPage();
-    await userEvent.click(
-      within(screen.getByText("CAI sezioni").closest("li")!).getByRole("checkbox"),
-    );
-    await userEvent.click(
-      within(screen.getByText("Fonte: OSM").closest("li")!).getByRole("checkbox"),
-    );
-    await userEvent.click(screen.getByRole("button", { name: "Leggi i siti scelti" }));
+    await choose("Tipo di ente", "CAI");
+    await choose("Regione da cercare", "Lombardia");
+    await userEvent.click(await screen.findByRole("button", { name: "Cerca altri siti" }));
     await waitFor(() => expect(toastError).toHaveBeenCalledWith("CAI sezioni: HTTP 500"));
-    expect(invoke).toHaveBeenCalledWith("explore_seeds", {
-      request: expect.objectContaining({ listName: "Fonte: OSM" }),
-    });
+    expect(invoke).toHaveBeenCalledWith("discover_by_search", expect.anything());
   });
 
   it("shows crawl progress and stops the crawl", async () => {
@@ -370,10 +445,8 @@ describe("SearchPage", () => {
       command === "explore_seeds" ? pending.promise : defaultInvoke(command),
     );
     await renderPage();
-    await userEvent.click(
-      within(screen.getByText("Fonte: OSM").closest("li")!).getByRole("checkbox"),
-    );
-    await userEvent.click(screen.getByRole("button", { name: "Leggi i siti scelti" }));
+    await choose("Tipo di ente", "Infanzia");
+    await userEvent.click(await screen.findByRole("button", { name: "Leggi i siti" }));
     act(() => {
       listeners.get("lead-crawl-progress")?.({
         payload: {
@@ -402,113 +475,141 @@ describe("SearchPage", () => {
   });
 
   const plan = {
-    category: "Turismo e promozione territoriale",
-    subcategory: "Pro Loco",
+    category: "Istruzione",
+    subcategory: "Infanzia",
     regione: "Lombardia",
-    source_ids: ["dir-cai"],
-    web_query: "pro loco Lombardia email",
+    source_ids: [],
+    web_query: "scuole infanzia Lombardia",
   };
 
-  it("turns a free-form request into directories, collected sites and a web search", async () => {
+  it("turns a free-form request into the picked type of ente and region, and spends nothing", async () => {
     invoke.mockImplementation((command: string) =>
       command === "plan_lead_request" ? Promise.resolve(plan) : defaultInvoke(command),
     );
     await renderPage();
     await userEvent.type(
       screen.getByLabelText("Descrizione della ricerca lead"),
-      "tutte le pro loco della Lombardia",
+      "tutte le scuole dell'infanzia della Lombardia",
     );
     await userEvent.click(screen.getByRole("button", { name: "Cerca" }));
-    const scoped = {
-      category: "Turismo e promozione territoriale",
-      subcategory: "Pro Loco",
-      regione: "Lombardia",
-      limit: 50,
-      maxPages: 3,
-      maxPdfs: 0,
-      useAi: true,
-    };
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("explore_seeds", {
-        request: { listName: "Scoperta: ricerca web", ...scoped },
-      }),
+      expect(screen.getByRole("button", { name: "Tipo di ente" })).toHaveTextContent("Infanzia"),
     );
-    expect(invoke).not.toHaveBeenCalledWith("discover_by_maps", expect.anything());
-    expect(invoke).toHaveBeenCalledWith("discover_by_search", {
-      request: {
-        query: "pro loco Lombardia email",
-        category: "Turismo e promozione territoriale",
-        subcategory: "Pro Loco",
-        regione: "Lombardia",
-      },
-    });
-    expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining("2 siti nuovi"));
+    expect(screen.getByRole("button", { name: "Regione da cercare" })).toHaveTextContent(
+      "Lombardia",
+    );
     expect(invoke).toHaveBeenCalledWith("plan_lead_request", {
-      request: "tutte le pro loco della Lombardia",
+      request: "tutte le scuole dell'infanzia della Lombardia",
     });
+    expect(invoke).toHaveBeenCalledWith("list_subcategory_coverage", { regione: "Lombardia" });
+    for (const spending of ["explore_seeds", "explore_directory", "discover_by_search"]) {
+      expect(invoke).not.toHaveBeenCalledWith(spending, expect.anything());
+    }
+  });
+
+  it("asks to pick a type when the request names none", async () => {
+    invoke.mockImplementation((command: string) =>
+      command === "plan_lead_request"
+        ? Promise.resolve({ ...plan, category: null, subcategory: null })
+        : defaultInvoke(command),
+    );
+    await renderPage();
+    await userEvent.type(screen.getByLabelText("Descrizione della ricerca lead"), "qualcosa");
+    await userEvent.click(screen.getByRole("button", { name: "Cerca" }));
+    await waitFor(() =>
+      expect(toastError).toHaveBeenCalledWith(expect.stringContaining("sceglilo dall'elenco")),
+    );
+  });
+
+  it("looks for more sites only once the known ones are read, and only in a region", async () => {
+    await renderPage();
+    const more = () => screen.findByRole("button", { name: "Cerca altri siti" });
+    await choose("Tipo di ente", "Infanzia");
+    expect(await more()).toBeDisabled(); // 6 sites still to read
+    await choose("Tipo di ente", "CAI");
+    expect(await more()).toBeDisabled(); // nothing left, but no region yet
+    await choose("Regione da cercare", "Lombardia");
+    await userEvent.click(await more());
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("2 siti nuovi da leggere"));
     expect(invoke).toHaveBeenCalledWith("explore_directory", {
       request: { sourceId: "dir-cai", useAi: true },
     });
-    expect(invoke).toHaveBeenCalledWith("explore_seeds", {
-      request: { listName: null, ...scoped },
+    expect(invoke).toHaveBeenCalledWith("discover_by_search", {
+      request: { category: "Associazioni", subcategory: "CAI", regione: "Lombardia" },
+    });
+    expect(invoke).not.toHaveBeenCalledWith("discover_by_maps", expect.anything());
+    expect(invoke).not.toHaveBeenCalledWith("explore_seeds", expect.anything());
+  });
+
+  it("adds Google Maps to the search for more sites only when it is enabled", async () => {
+    invoke.mockImplementation((command: string) =>
+      command === "get_contextdev_settings"
+        ? Promise.resolve({ concurrency: 2, maps_enabled: true })
+        : defaultInvoke(command),
+    );
+    await renderPage();
+    await choose("Tipo di ente", "CAI");
+    await choose("Regione da cercare", "Lombardia");
+    await userEvent.click(await screen.findByRole("button", { name: "Cerca altri siti" }));
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("3 siti nuovi da leggere"));
+    expect(invoke).toHaveBeenCalledWith("discover_by_maps", {
+      request: { category: "Associazioni", subcategory: "CAI", regione: "Lombardia" },
     });
   });
 
-  it("adds Google Maps to the request only when it is enabled", async () => {
+  it("finds the sites of organizations known only by name, batch after batch, until none is left", async () => {
+    let withoutSite = 5;
     invoke.mockImplementation((command: string) => {
       if (command === "get_contextdev_settings") {
-        return Promise.resolve({ concurrency: 2, maps_enabled: true });
+        return Promise.resolve({ concurrency: 2, maps_enabled: false, max_credits_per_run: 2 });
       }
-      return command === "plan_lead_request" ? Promise.resolve(plan) : defaultInvoke(command);
+      if (command === "find_seed_sites") {
+        withoutSite = Math.max(0, withoutSite - 2);
+        return Promise.resolve(1);
+      }
+      if (command === "list_seed_lists") {
+        return Promise.resolve([
+          {
+            list_name: "Fonte: OSM",
+            total: 5,
+            pending: 3,
+            crawled: 0,
+            failed: 0,
+            without_site: withoutSite,
+            to_verify: 0,
+          },
+        ]);
+      }
+      return defaultInvoke(command);
     });
     await renderPage();
-    await userEvent.type(screen.getByLabelText("Descrizione della ricerca lead"), "pro loco");
-    await userEvent.click(screen.getByRole("button", { name: "Cerca" }));
-    await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("explore_seeds", {
-        request: expect.objectContaining({ listName: "Scoperta: Google Maps" }),
-      }),
+    await userEvent.click(
+      await screen.findByRole("button", { name: "Trova i siti di Fonte: OSM" }),
     );
-    expect(invoke).toHaveBeenCalledWith("discover_by_maps", {
-      request: {
-        category: "Turismo e promozione territoriale",
-        subcategory: "Pro Loco",
-        regione: "Lombardia",
-      },
-    });
-    expect(toastSuccess).toHaveBeenCalledWith(expect.stringContaining("3 siti nuovi"));
+    await waitFor(() =>
+      expect(toastSuccess).toHaveBeenCalledWith("Fonte: OSM: 3 siti trovati da leggere"),
+    );
+    expect(confirmDialog).toHaveBeenCalledWith(
+      expect.objectContaining({ description: expect.stringContaining("≈ 5 crediti") }),
+    );
+    const calls = invoke.mock.calls.filter(([command]) => command === "find_seed_sites");
+    expect(calls).toEqual([
+      ["find_seed_sites", { listName: "Fonte: OSM", limit: 2 }],
+      ["find_seed_sites", { listName: "Fonte: OSM", limit: 2 }],
+      ["find_seed_sites", { listName: "Fonte: OSM", limit: 2 }],
+    ]);
   });
 
-  it("does not read the search list when the web search finds no new site", async () => {
-    invoke.mockImplementation((command: string) => {
-      if (command === "discover_by_search") {
-        return Promise.resolve({
-          found: 2,
-          known: 2,
-          rejected: 0,
-          accepted: 0,
-          to_verify: 0,
-          credits: 1,
-        });
-      }
-      return command === "plan_lead_request" ? Promise.resolve(plan) : defaultInvoke(command);
-    });
-    await renderPage();
-    await userEvent.type(screen.getByLabelText("Descrizione della ricerca lead"), "pro loco");
-    await userEvent.click(screen.getByRole("button", { name: "Cerca" }));
-    await waitFor(() => expect(toastSuccess).toHaveBeenCalled());
-    expect(invoke).not.toHaveBeenCalledWith("explore_seeds", {
-      request: expect.objectContaining({ listName: "Scoperta: ricerca web" }),
-    });
-  });
-
-  it("finds the sites of organizations known only by name", async () => {
+  it("stops looking for sites when a batch settles no organization", async () => {
     await renderPage();
     await userEvent.click(screen.getByRole("button", { name: "Trova i siti di Fonte: OSM" }));
     await waitFor(() =>
-      expect(invoke).toHaveBeenCalledWith("find_seed_sites", { listName: "Fonte: OSM", limit: 50 }),
+      expect(toastSuccess).toHaveBeenCalledWith(
+        "Fonte: OSM: 3 siti trovati da leggere · 1 ancora senza sito",
+      ),
     );
-    expect(toastSuccess).toHaveBeenCalledWith("Fonte: OSM: 3 siti trovati da leggere");
+    expect(invoke).toHaveBeenCalledWith("find_seed_sites", { listName: "Fonte: OSM", limit: 200 });
+    expect(invoke.mock.calls.filter(([command]) => command === "find_seed_sites")).toHaveLength(1);
   });
 
   it("paginates in bounded 100-row pages", async () => {

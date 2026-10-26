@@ -72,6 +72,22 @@ export function CommandEmpty({
   );
 }
 
+export function CommandGroup({
+  className,
+  ...props
+}: ComponentProps<typeof CommandPrimitive.Group>) {
+  return (
+    <CommandPrimitive.Group
+      data-slot="command-group"
+      className={cn(
+        "[&_[cmdk-group-heading]]:px-2 [&_[cmdk-group-heading]]:pt-2 [&_[cmdk-group-heading]]:pb-1 [&_[cmdk-group-heading]]:text-[11px] [&_[cmdk-group-heading]]:font-medium [&_[cmdk-group-heading]]:tracking-wide [&_[cmdk-group-heading]]:text-faint [&_[cmdk-group-heading]]:uppercase",
+        className,
+      )}
+      {...props}
+    />
+  );
+}
+
 export function CommandItem({
   className,
   children,
