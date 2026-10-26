@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { aiChoice } from "../features/opencodePrefs";
 import type {
   ChannelYield,
   ContextDevSettings,
@@ -30,7 +31,6 @@ export type StartSearchRunInput = {
   seedUrls: string[];
   maxPagesPerDomain: number;
   maxPdfs: number;
-  useAi: boolean;
 };
 
 export type ExploreRequest = {
@@ -42,7 +42,6 @@ export type ExploreRequest = {
   limit: number;
   maxPages: number;
   maxPdfs: number;
-  useAi: boolean;
   /** context.dev credits the run may spend at most; the per-run cap of Settings when omitted. */
   maxCredits?: number;
 };
@@ -54,7 +53,6 @@ export type DirectoryRequest = {
   category?: string | null;
   subcategory?: string | null;
   maxPages?: number;
-  useAi: boolean;
 };
 
 export type SearchExportReport = { path: string; rows_written: number };
@@ -67,7 +65,7 @@ export type PromoteSearchReport = {
 };
 
 export const startSearchRun = (input: StartSearchRunInput) =>
-  invoke<SearchRunSummary>("start_search_run", input);
+  invoke<SearchRunSummary>("start_search_run", { ...input, ...aiChoice() });
 
 export const listSearchLeads = (filters: LeadFilters, offset: number) =>
   invoke<SearchLeadList>("list_search_leads", { filters, limit: 100, offset });
@@ -94,10 +92,10 @@ export const estimateExplore = (request: ExploreRequest) =>
   invoke<ExploreEstimate>("estimate_explore", { request });
 
 export const exploreSeeds = (request: ExploreRequest) =>
-  invoke<SearchRunSummary>("explore_seeds", { request });
+  invoke<SearchRunSummary>("explore_seeds", { request: { ...request, ...aiChoice() } });
 
 export const exploreDirectory = (request: DirectoryRequest) =>
-  invoke<SearchRunSummary>("explore_directory", { request });
+  invoke<SearchRunSummary>("explore_directory", { request: { ...request, ...aiChoice() } });
 
 export const cancelLeadCrawl = () => invoke<void>("cancel_lead_crawl");
 
@@ -148,4 +146,4 @@ export const promoteSearchLeads = (filters: LeadFilters) =>
 
 /** The IA reads a free-form request into taxonomy, region, directories and a web search. */
 export const planLeadRequest = (request: string) =>
-  invoke<LeadPlan>("plan_lead_request", { request });
+  invoke<LeadPlan>("plan_lead_request", { request, ...aiChoice() });

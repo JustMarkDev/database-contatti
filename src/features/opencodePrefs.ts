@@ -19,6 +19,12 @@ export function saveOpenCodePrefs(prefs: OpenCodePrefs) {
   localStorage.setItem(KEY, JSON.stringify(prefs));
 }
 
+/** The OpenCode choice of Settings, as the fields the site-reading commands take. */
+export function aiChoice(): { aiModel?: string; aiEffort?: string } {
+  const { model, effort } = loadOpenCodePrefs();
+  return { ...(model && { aiModel: model }), ...(effort && { aiEffort: effort }) };
+}
+
 /** Applies the user's OpenCode choice on top of the default cascade request. */
 export function withOpenCodePrefs(request: AiStartRequest): AiStartRequest {
   const { model, effort } = loadOpenCodePrefs();

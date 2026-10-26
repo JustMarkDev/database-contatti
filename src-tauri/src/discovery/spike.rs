@@ -78,6 +78,8 @@ async fn contextdev_live_spike() {
     let settings = CrawlSettings {
         context: &context,
         max_pages: 3,
+        extend_to: 0,
+        map_always: false,
         max_pdfs: 0,
         directory: false,
         ai: None,

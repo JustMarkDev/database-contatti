@@ -192,6 +192,8 @@ function defaultInvoke(command: string): Promise<unknown> {
           failed: 0,
           to_verify: 0,
           leads: 9,
+          new_leads: 6,
+          credits: 12,
         },
         {
           category: "Istruzione",
@@ -202,6 +204,8 @@ function defaultInvoke(command: string): Promise<unknown> {
           failed: 1,
           to_verify: 0,
           leads: 12,
+          new_leads: 5,
+          credits: 20,
         },
       ]);
     case "list_seed_lists":
@@ -330,6 +334,8 @@ describe("SearchPage", () => {
     failed: 0,
     to_verify: 0,
     leads: 12,
+    new_leads: 5,
+    credits: 20,
   });
 
   it("lists the askable types of ente with their known sites and shows how far the reading is", async () => {
@@ -340,7 +346,9 @@ describe("SearchPage", () => {
     expect(infanzia).toHaveTextContent("Infanzia10");
     await userEvent.click(infanzia);
     expect(
-      await screen.findByText(/10 siti noti · 3 letti · 6 da leggere · 12 indirizzi trovati/),
+      await screen.findByText(
+        /10 siti noti · 3 letti · 6 da leggere · 12 indirizzi trovati \(5 nuovi\) · 20 crediti \(4 per indirizzo nuovo\)/,
+      ),
     ).toBeInTheDocument();
     expect(screen.getByText(/1 non raggiungibili/)).toBeInTheDocument();
   });
@@ -364,7 +372,7 @@ describe("SearchPage", () => {
     );
     expect(confirmDialog).toHaveBeenCalledWith(
       expect.objectContaining({
-        description: expect.stringContaining("≈ 6 siti, al massimo ≈ 24 crediti"),
+        description: expect.stringContaining("≈ 6 siti, ≈ 24 crediti"),
       }),
     );
     const request = {
@@ -375,7 +383,6 @@ describe("SearchPage", () => {
       limit: 500,
       maxPages: 3,
       maxPdfs: 0,
-      useAi: true,
     };
     expect(exploreCalls()).toEqual([{ request }, { request }]);
   });
@@ -532,7 +539,7 @@ describe("SearchPage", () => {
     await userEvent.click(await more());
     await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("2 siti nuovi da leggere"));
     expect(invoke).toHaveBeenCalledWith("explore_directory", {
-      request: { sourceId: "dir-cai", useAi: true },
+      request: { sourceId: "dir-cai" },
     });
     expect(invoke).toHaveBeenCalledWith("discover_by_search", {
       request: { category: "Associazioni", subcategory: "CAI", regione: "Lombardia" },

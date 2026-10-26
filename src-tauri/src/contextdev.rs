@@ -60,6 +60,11 @@ pub(crate) enum ContextError {
 }
 
 impl ContextError {
+    /// The site did not answer at all (`WEBSITE_ACCESS_ERROR`): worth a try over plain http.
+    pub(crate) fn is_access_error(&self) -> bool {
+        matches!(self, Self::Failed(message) if message.starts_with("WEBSITE_ACCESS_ERROR"))
+    }
+
     /// Only these mark a seed `failed`; credit and capacity errors leave it pending.
     pub(crate) fn is_site_error(&self) -> bool {
         matches!(self, Self::Blocked | Self::NotFound | Self::Failed(_))
@@ -198,7 +203,8 @@ fn scraped(body: &str, markdown: bool) -> Result<ScrapedPage, ContextError> {
     Err(match code.as_str() {
         "WEBSITE_BLOCKED" => ContextError::Blocked,
         "NOT_FOUND" => ContextError::NotFound,
-        "INTERNAL_ERROR" => ContextError::Transient(message),
+        // The page was not ready in time: worth another try, unlike a dead site.
+        "INTERNAL_ERROR" | "REQUEST_TIMEOUT" => ContextError::Transient(message),
         _ => ContextError::Failed(format!("{code}: {message}")),
     })
 }
@@ -391,6 +397,22 @@ pub(crate) struct ContextDev {
     budget: Option<u64>,
     halted: Mutex<Option<ContextError>>,
     bad_requests_in_a_row: AtomicU64,
+    /// Every request sent, for the live measurements.
+    #[cfg(test)]
+    pub(crate) log: Mutex<Vec<CallLog>>,
+}
+
+#[cfg(test)]
+#[derive(Debug, Clone)]
+pub(crate) struct CallLog {
+    /// `map`, `scrape`, `search` or `other`.
+    pub(crate) kind: &'static str,
+    pub(crate) target: String,
+    pub(crate) millis: u128,
+    pub(crate) credits: u64,
+    pub(crate) status: u16,
+    /// URLs a Map call returned.
+    pub(crate) items: Option<usize>,
 }
 
 /// A Free-plan key can be disabled by request errors: stop well before.
@@ -415,6 +437,8 @@ impl ContextDev {
             budget,
             halted: Mutex::new(None),
             bad_requests_in_a_row: AtomicU64::new(0),
+            #[cfg(test)]
+            log: Mutex::new(Vec::new()),
         })
     }
 
@@ -476,6 +500,8 @@ impl ContextDev {
             .acquire()
             .await
             .map_err(|error| ContextError::Transient(error.to_string()))?;
+        #[cfg(test)]
+        let (started, probe) = (std::time::Instant::now(), request.try_clone());
         let response = request
             .bearer_auth(&self.key)
             .send()
@@ -491,6 +517,49 @@ impl ContextDev {
             .await
             .map_err(|error| ContextError::Transient(error.to_string()))?;
         let (consumed, remaining) = key_metadata(&body);
+        #[cfg(test)]
+        if let Some(Ok(built)) = probe.map(|probe| probe.build()) {
+            let path = built.url().path().to_owned();
+            let sent: serde_json::Value = built
+                .body()
+                .and_then(|body| body.as_bytes())
+                .and_then(|bytes| serde_json::from_slice(bytes).ok())
+                .unwrap_or_default();
+            let kind = match path.as_str() {
+                "/v1/web/urls" => "map",
+                "/v1/web/scrape" => "scrape",
+                "/v1/web/search" => "search",
+                _ => "other",
+            };
+            let target = sent["url"]
+                .as_str()
+                .map(str::to_owned)
+                .or_else(|| {
+                    built
+                        .url()
+                        .query_pairs()
+                        .find(|(key, _)| key == "domain")
+                        .map(|(_, value)| value.into_owned())
+                })
+                .unwrap_or(path);
+            let items = (kind == "map")
+                .then(|| {
+                    serde_json::from_str::<serde_json::Value>(&body)
+                        .ok()
+                        .and_then(|value| Some(value["urls"].as_array()?.len()))
+                })
+                .flatten();
+            if let Ok(mut log) = self.log.lock() {
+                log.push(CallLog {
+                    kind,
+                    target,
+                    millis: started.elapsed().as_millis(),
+                    credits: consumed,
+                    status,
+                    items,
+                });
+            }
+        }
         self.credits_used.fetch_add(consumed, Ordering::Relaxed);
         if let Some(remaining) = remaining {
             self.credits_remaining.store(remaining, Ordering::Relaxed);
@@ -505,9 +574,12 @@ impl ContextDev {
     }
 
     /// `cost` is the expected price, checked against the cap before sending.
+    /// `retry_transient` is off for Map: a 408 means the site is slow to map and
+    /// repeating it only costs 30s more per try (the page reads go on without it).
     async fn call<T>(
         &self,
         cost: u64,
+        retry_transient: bool,
         request: impl Fn(&reqwest::Client) -> reqwest::RequestBuilder,
         parse: impl Fn(&str) -> Result<T, ContextError>,
     ) -> Result<T, ContextError> {
@@ -523,7 +595,9 @@ impl ContextDev {
                 },
                 Err(error) => error,
             };
-            let delay = retry_delay(&error, attempt).ok_or(error)?;
+            let delay = retry_delay(&error, attempt)
+                .filter(|_| retry_transient || !matches!(error, ContextError::Transient(_)))
+                .ok_or(error)?;
             attempt += 1;
             tokio::time::sleep(delay).await;
         }
@@ -544,6 +618,7 @@ impl ContextDev {
         });
         self.call(
             1,
+            true,
             |http| http.post(format!("{BASE_URL}/web/scrape")).json(&body),
             |response| scraped(response, markdown),
         )
@@ -580,6 +655,7 @@ impl ContextDev {
         query.extend(search.map(|text| ("search", text)));
         self.call(
             if search.is_some() { 2 } else { 1 },
+            false,
             |http| http.get(format!("{BASE_URL}/web/urls")).query(&query),
             mapped,
         )
@@ -598,6 +674,7 @@ impl ContextDev {
         });
         self.call(
             1,
+            true,
             |http| http.post(format!("{BASE_URL}/web/search")).json(&body),
             searched,
         )
@@ -615,6 +692,7 @@ impl ContextDev {
         });
         self.call(
             1,
+            true,
             |http| http.post(format!("{BASE_URL}/web/scrape")).json(&body),
             maps_places,
         )
@@ -624,6 +702,7 @@ impl ContextDev {
     pub(crate) async fn usage(&self) -> Result<Usage, ContextError> {
         self.call(
             0,
+            true,
             |http| http.get(format!("{BASE_URL}/org/usage")),
             |body| {
                 serde_json::from_str(body).map_err(|error| {
@@ -833,6 +912,10 @@ mod tests {
             ContextError::Transient("m".to_owned())
         );
         assert_eq!(
+            failed("REQUEST_TIMEOUT"),
+            ContextError::Transient("m".to_owned())
+        );
+        assert_eq!(
             failed("PDF_IMAGES_ONLY"),
             ContextError::Failed("PDF_IMAGES_ONLY: m".to_owned())
         );
@@ -887,6 +970,10 @@ mod tests {
             assert_eq!(retry_delay(&never, 0), None);
         }
 
+        let failed = |code: &str| ContextError::Failed(format!("{code}: m"));
+        assert!(failed("WEBSITE_ACCESS_ERROR").is_access_error());
+        assert!(!ContextError::Blocked.is_access_error());
+        assert!(!failed("PDF_IMAGES_ONLY").is_access_error());
         assert!(ContextError::NotFound.is_site_error());
         assert!(!ContextError::UsageExceeded.is_site_error());
         assert!(!rate.is_site_error());

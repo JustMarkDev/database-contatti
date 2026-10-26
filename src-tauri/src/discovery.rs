@@ -26,6 +26,8 @@ use std::path::Path;
 use std::sync::LazyLock;
 
 #[cfg(test)]
+mod crawl_check;
+#[cfg(test)]
 mod spike;
 mod store;
 
@@ -39,6 +41,9 @@ pub(crate) const DEFAULT_MAX_PAGES_PER_DOMAIN: i64 = 3;
 pub(crate) const MAX_PDF_LINKS: i64 = 2;
 pub(crate) const DEFAULT_MAX_PDFS: i64 = 0;
 const MAX_HOST_ERRORS: usize = 3;
+/// Pages per site once the extra pages keep yielding: after the pages the user
+/// asked for, a site is read on only while its last page gave a new address.
+pub(crate) const EXTEND_UP_TO_PAGES: usize = 10;
 /// Candidates the model may choose from, best local score first.
 const MAX_AI_CANDIDATES: usize = 40;
 /// Links to other sites kept per site read (directories keep them all).
@@ -70,7 +75,7 @@ static PERSON_NAME_RE: LazyLock<Regex> = LazyLock::new(|| {
         .expect("valid person name regex")
 });
 
-const NAME_STOPWORDS: [&str; 20] = [
+const NAME_STOPWORDS: [&str; 41] = [
     "referente",
     "bullismo",
     "cyberbullismo",
@@ -91,6 +96,28 @@ const NAME_STOPWORDS: [&str; 20] = [
     "posta",
     "protocollo",
     "italia",
+    // Page furniture that looks like a name: "Cookie Policy", "Facebook Vai", "Credits Area".
+    "cookie",
+    "policy",
+    "privacy",
+    "facebook",
+    "instagram",
+    "vai",
+    "accetta",
+    "tel",
+    "via",
+    "area",
+    "credits",
+    "software",
+    "informatica",
+    "feedback",
+    "accessibilità",
+    "eventi",
+    "avvisi",
+    "piazza",
+    "la",
+    "il",
+    "del",
 ];
 
 #[derive(Debug, Clone)]
@@ -203,16 +230,18 @@ impl LeadAccumulator {
         &self.email
     }
 
-    pub(crate) fn set_role(&mut self, role: Option<String>) {
-        if self.role.is_none() {
-            self.role = role;
-        }
+    #[cfg(test)]
+    pub(crate) fn role_and_person(&self) -> (Option<&str>, Option<&str>) {
+        (self.role.as_deref(), self.person_name.as_deref())
     }
 
-    pub(crate) fn set_person_name(&mut self, person_name: Option<String>) {
-        if self.person_name.is_none() {
-            self.person_name = person_name;
+    /// The model read the text around the address: its person replaces the page
+    /// parser's guess (no person is better than a wrong one), its role wins when it has one.
+    pub(crate) fn set_described(&mut self, role: Option<String>, person_name: Option<String>) {
+        if role.is_some() {
+            self.role = role;
         }
+        self.person_name = person_name;
     }
 }
 
@@ -383,26 +412,49 @@ fn category_keywords(category: Option<&str>) -> &'static Regex {
 
 /// Local, free score of a candidate page: category words in the URL count
 /// most, then in the link text or the title and description Map returns.
-/// Deep paths and query strings lose points.
+/// Deep paths and query strings rank a page lower but never below a page with
+/// no keyword at all: a "Contatti" link to `index.php?id=21` is worth reading.
 fn page_score(url: &str, label: &str, keywords: &Regex) -> i32 {
-    let path = url_path(url).to_lowercase();
-    let (path, query) = path.split_once('?').unwrap_or((&path, ""));
-    let in_path = keywords.find_iter(path).count().min(2) as i32;
+    let lower = url_path(url).to_lowercase();
+    let (path, query) = lower.split_once('?').unwrap_or((&lower, ""));
+    // The query counts too: old CMSs put the page name there (`?page=contatti`).
+    let in_path = keywords.find_iter(&lower).count().min(2) as i32;
     let in_label = keywords.find_iter(&label.to_lowercase()).count().min(2) as i32;
     let depth = path.split('/').filter(|part| !part.is_empty()).count();
-    3 * in_path + 2 * in_label
-        - depth.saturating_sub(2) as i32
-        - if query.is_empty() { 0 } else { 2 }
+    let signal = 3 * in_path + 2 * in_label;
+    let penalty = depth.saturating_sub(2) as i32 + if query.is_empty() { 0 } else { 2 };
+    if signal > 0 {
+        (signal - penalty).max(1)
+    } else {
+        -penalty
+    }
 }
 
-/// Same page whatever the scheme, `www.` or trailing slash.
+/// Query parameters that only switch the language of the same page.
+const LANGUAGE_PARAMS: [&str; 5] = ["lang", "language", "locale", "hl", "lng"];
+
+/// Same page whatever the scheme, `www.`, trailing slash or language switch.
 fn page_key(url: &str) -> String {
     let host = url_host(url).unwrap_or_default();
     let path = url_path(url);
+    let path = path.split('#').next().unwrap_or("");
+    let (path, query) = path.split_once('?').unwrap_or((path, ""));
+    let query: Vec<&str> = query
+        .split('&')
+        .filter(|pair| {
+            let name = pair.split('=').next().unwrap_or("").to_lowercase();
+            !pair.is_empty() && !LANGUAGE_PARAMS.contains(&name.as_str())
+        })
+        .collect();
     format!(
-        "{}{}",
+        "{}{}{}",
         host.trim_start_matches("www."),
-        path.split('#').next().unwrap_or("").trim_end_matches('/')
+        path.trim_end_matches('/'),
+        if query.is_empty() {
+            String::new()
+        } else {
+            format!("?{}", query.join("&"))
+        }
     )
 }
 
@@ -683,6 +735,9 @@ struct HostState {
     queue: VecDeque<String>,
     visited: HashSet<String>,
     seen_content: HashSet<u64>,
+    /// Addresses found so far on this host, and whether the last page added any.
+    seen_emails: HashSet<String>,
+    last_page_new: bool,
     /// Directory mode: only links under this path (plus pagination) are followed.
     prefix: Option<String>,
     crawl: HostCrawl,
@@ -757,6 +812,9 @@ fn ingest_page(state: &mut HostState, url: String, html: String, via: &'static s
     {
         return Vec::new();
     }
+    for hit in &parsed.emails {
+        state.last_page_new |= state.seen_emails.insert(email_comparison_key(&hit.email));
+    }
     // Directory mode follows the list; a site's pages are chosen up front.
     if let Some(prefix) = &state.prefix {
         for link in parsed.links {
@@ -830,6 +888,11 @@ pub(crate) struct CrawlSettings<'a> {
     pub(crate) context: &'a crate::contextdev::ContextDev,
     /// Pages per site, the home included (directory mode: pages of the list).
     pub(crate) max_pages: usize,
+    /// Ceiling once a site keeps yielding new addresses past `max_pages`
+    /// (ignored in directory mode).
+    pub(crate) extend_to: usize,
+    /// Map every site, even one whose home links already offer good pages.
+    pub(crate) map_always: bool,
     /// PDFs per site; only Istruzione seeds use them.
     pub(crate) max_pdfs: usize,
     /// Directory mode: follow links under the start path and keep links to
@@ -922,6 +985,7 @@ async fn read_page(settings: &CrawlSettings<'_>, state: &mut HostState, url: &st
         return None;
     }
     state.visited.insert(url.to_owned());
+    state.last_page_new = false;
     let result = settings.context.scrape_html(url).await;
     state.crawl.credits += u64::from(sent(&result));
     match result {
@@ -1014,6 +1078,8 @@ pub(crate) async fn crawl_host(
         queue: VecDeque::new(),
         visited: HashSet::from([seed.clone()]),
         seen_content: HashSet::new(),
+        seen_emails: HashSet::new(),
+        last_page_new: false,
         prefix,
         crawl: HostCrawl::default(),
     };
@@ -1022,8 +1088,23 @@ pub(crate) async fn crawl_host(
         state.crawl.retry_later = true;
         return state.crawl;
     }
-    let home = settings.context.scrape_html(&seed).await;
+    let mut home = settings.context.scrape_html(&seed).await;
     state.crawl.credits += u64::from(sent(&home));
+    // Seeds are stored as https://, but some small sites only answer over plain
+    // http (or redirect from it to their real domain): try that once.
+    if let (Err(error), Some(rest)) = (&home, seed.strip_prefix("https://"))
+        && error.is_access_error()
+        && !settings.stopped()
+    {
+        let plain = settings
+            .context
+            .scrape_html(&format!("http://{rest}"))
+            .await;
+        state.crawl.credits += u64::from(sent(&plain));
+        if plain.is_ok() {
+            home = plain;
+        }
+    }
     let home = match home {
         Ok(page) => page,
         Err(error) => {
@@ -1048,22 +1129,37 @@ pub(crate) async fn crawl_host(
     let pdfs = ingest_page(&mut state, home.final_url, home.content, VIA);
     state.crawl.pdf_found += pdfs.len();
 
-    let mapped = if settings.stopped() {
+    // Map costs a credit and its pages rarely hold a mailbox (measured: 0.2 new
+    // addresses a page against 1.5 for the home's own links), so a site is only
+    // mapped when the home links offer nothing the local score likes.
+    let anchors = page_anchors(&home_url, &home_html);
+    let directory = state.prefix.is_some();
+    let mut ranked = rank_candidates(&state.host, &state.visited, &anchors, &[], category);
+    let mapped = if settings.stopped()
+        || (!directory && !settings.map_always && ranked.iter().any(|(_, _, score)| *score > 0))
+    {
         Vec::new()
     } else {
         let prefix = state.prefix.clone();
         map_site(settings, &mut state, &seed, prefix.as_deref()).await
     };
 
-    if state.prefix.is_some() {
+    if directory {
         crawl_directory(settings, &mut state, mapped).await;
         return state.crawl;
     }
 
-    let anchors = page_anchors(&home_url, &home_html);
-    let ranked = rank_candidates(&state.host, &state.visited, &anchors, &mapped, category);
+    if !mapped.is_empty() {
+        ranked = rank_candidates(&state.host, &state.visited, &anchors, &mapped, category);
+    }
     let mut chosen: Vec<String> = seeds[1..].to_vec();
-    if let Some(ai) = settings.ai {
+    // Choosing links costs model time and, on sites with no page the local score
+    // likes, extra pages that rarely hold a mailbox: the model only steps in when no
+    // candidate scores above zero.
+    if let Some(ai) = settings
+        .ai
+        .filter(|_| !ranked.iter().any(|(_, _, score)| *score > 0))
+    {
         let offered: Vec<(String, String)> = ranked
             .iter()
             .take(MAX_AI_CANDIDATES)
@@ -1075,7 +1171,15 @@ pub(crate) async fn crawl_host(
         }
     }
     let mut streak = 0usize;
-    for url in pick_pages(&ranked, &chosen, state.cap - 1) {
+    let ceiling = settings.extend_to.max(state.cap);
+    for (index, url) in pick_pages(&ranked, &chosen, ceiling - 1)
+        .into_iter()
+        .enumerate()
+    {
+        // Past the pages asked for, only a site whose last page gave a new address goes on.
+        if index >= state.cap - 1 && !state.last_page_new {
+            break;
+        }
         let before = state.crawl.errors.len();
         if read_page(settings, &mut state, &url).await.is_none() {
             break;
@@ -1158,7 +1262,8 @@ pub(crate) async fn start_search_run(
     seed_urls: Vec<String>,
     max_pages_per_domain: Option<i64>,
     max_pdfs: Option<i64>,
-    use_ai: Option<bool>,
+    ai_model: Option<String>,
+    ai_effort: Option<String>,
 ) -> Result<SearchRunSummary, String> {
     let seeds = validate_seeds(&seed_urls)?;
     let (max_pages, max_pdfs) = clamp_run_limits(max_pages_per_domain, max_pdfs);
@@ -1170,9 +1275,10 @@ pub(crate) async fn start_search_run(
             source_id: None,
             max_pages,
             max_pdfs,
-            use_ai: use_ai.unwrap_or(false),
             directory: None,
             max_credits: 0,
+            ai_model: ai_model.unwrap_or_default(),
+            ai_effort,
         },
         seeds
             .into_iter()
@@ -1436,6 +1542,8 @@ mod tests {
             queue: VecDeque::new(),
             visited: HashSet::new(),
             seen_content: HashSet::new(),
+            seen_emails: HashSet::new(),
+            last_page_new: false,
             prefix: Some("/sezioni/".to_owned()),
             crawl: HostCrawl::default(),
         };
@@ -1487,6 +1595,63 @@ mod tests {
         ] {
             assert!(!is_noise(url), "atteso utile: {url}");
         }
+    }
+
+    #[test]
+    fn discovery_language_switches_are_the_same_page_but_other_queries_are_not() {
+        assert_eq!(
+            page_key("https://www.eisp.it/contacts?locale=it-IT"),
+            page_key("https://eisp.it/contacts?locale=en-GB")
+        );
+        assert_eq!(
+            page_key("https://x.example.test/contacts/?lang=en#top"),
+            page_key("http://x.example.test/contacts")
+        );
+        assert_ne!(
+            page_key("https://x.example.test/?page_id=94"),
+            page_key("https://x.example.test/?page_id=87")
+        );
+        assert_ne!(
+            page_key("https://x.example.test/?page_id=94"),
+            page_key("https://x.example.test/")
+        );
+        assert_eq!(
+            page_key("https://x.example.test/p?lang=it&id=3"),
+            page_key("https://x.example.test/p?id=3")
+        );
+    }
+
+    #[test]
+    fn discovery_a_keyword_is_never_cancelled_by_depth_or_query_penalties() {
+        let keywords = category_keywords(Some("Cultura"));
+        // The label alone says "contatti": the query penalty used to bring it to zero.
+        assert!(
+            page_score(
+                "https://x.example.test/index.php?id=21&Itemid=115",
+                "contatti",
+                keywords
+            ) > 0
+        );
+        // The page name lives in the query string.
+        assert!(
+            page_score(
+                "https://x.example.test/index.php?page=contatti",
+                "Vai",
+                keywords
+            ) > 0
+        );
+        // A deep path with a keyword stays readable, below the shallow one.
+        let deep = page_score("https://x.example.test/a/b/c/d/e/contatti", "", keywords);
+        let shallow = page_score("https://x.example.test/contatti", "", keywords);
+        assert!(deep > 0 && deep < shallow);
+        // No keyword anywhere: still not worth a credit.
+        assert!(
+            page_score(
+                "https://x.example.test/eventi-2026/foto",
+                "Galleria",
+                keywords
+            ) <= 0
+        );
     }
 
     #[test]
@@ -1605,6 +1770,50 @@ mod tests {
     }
 
     #[test]
+    fn discovery_a_page_counts_as_new_only_when_it_adds_an_address_to_the_host() {
+        let mut state = HostState {
+            host: "www.comune.example.test".to_owned(),
+            cap: 3,
+            pdf_cap: 0,
+            pdf_count: 0,
+            queue: VecDeque::new(),
+            visited: HashSet::new(),
+            seen_content: HashSet::new(),
+            seen_emails: HashSet::new(),
+            last_page_new: false,
+            prefix: None,
+            crawl: HostCrawl::default(),
+        };
+        let read = |state: &mut HostState, path: &str, html: &str| {
+            state.last_page_new = false;
+            ingest_page(
+                state,
+                format!("https://www.comune.example.test{path}"),
+                html.to_owned(),
+                "test",
+            );
+            state.last_page_new
+        };
+        assert!(read(
+            &mut state,
+            "/",
+            "<p>Segreteria segreteria@comune.example.test</p>"
+        ));
+        // Another page with the same address, and one without any: nothing new.
+        assert!(!read(
+            &mut state,
+            "/contatti",
+            "<p>Scrivi a Segreteria@comune.example.test per info sull'ufficio</p>"
+        ));
+        assert!(!read(&mut state, "/news", "<p>Nessun indirizzo qui</p>"));
+        assert!(read(
+            &mut state,
+            "/uffici",
+            "<p>Tributi tributi@comune.example.test</p>"
+        ));
+    }
+
+    #[test]
     fn discovery_every_site_keeps_its_links_to_other_sites() {
         let html = r#"<a href="/contatti">Contatti</a>
             <a href="https://www.parrocchia-sanmarco.example.test/">Parrocchia San Marco</a>
@@ -1619,6 +1828,8 @@ mod tests {
             queue: VecDeque::new(),
             visited: HashSet::new(),
             seen_content: HashSet::new(),
+            seen_emails: HashSet::new(),
+            last_page_new: false,
             prefix: None,
             crawl: HostCrawl::default(),
         };

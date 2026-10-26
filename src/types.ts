@@ -215,6 +215,10 @@ export type SubcategoryCoverage = {
   to_verify: number;
   /** Addresses found on the sites read. */
   leads: number;
+  /** Of those, the ones no contact holds yet. */
+  new_leads: number;
+  /** context.dev credits spent reading these sites. */
+  credits: number;
 };
 export type ContextDevSettings = {
   /** Requests in flight the plan allows (Free 2, Developer 10, Pro 100). */

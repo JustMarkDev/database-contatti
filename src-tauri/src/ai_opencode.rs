@@ -35,18 +35,22 @@ fn binary_path() -> Option<PathBuf> {
             return Some(path);
         }
     }
-    for candidate in [
-        "/opt/homebrew/bin/opencode",
-        "/usr/local/bin/opencode",
-        "/usr/bin/opencode",
-    ] {
-        let path = PathBuf::from(candidate);
+    // The official installer's copy (`opencode upgrade` updates it) is the one a
+    // shell finds first; Homebrew's, often older, comes after.
+    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
+    let user_bin = home.map(|home| PathBuf::from(home).join(".opencode/bin"));
+    for path in user_bin.iter().map(|dir| dir.join("opencode")).chain(
+        [
+            "/opt/homebrew/bin/opencode",
+            "/usr/local/bin/opencode",
+            "/usr/bin/opencode",
+        ]
+        .map(PathBuf::from),
+    ) {
         if path.is_file() {
             return Some(path);
         }
     }
-    let home = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE"));
-    let user_bin = home.map(|home| PathBuf::from(home).join(".opencode/bin"));
     // A GUI app on macOS has a minimal PATH, hence the fixed locations above; this also
     // covers Windows (`.exe`, `.cmd`) where `which` does not exist.
     let search =
@@ -258,7 +262,10 @@ impl OpenCodeProvider {
                 .error
                 .unwrap_or_else(|| "OpenCode non disponibile".to_owned()));
         }
-        let model_input = model.trim();
+        // No model chosen: the one Settings shows as selected.
+        let model_input = Some(model.trim())
+            .filter(|model| !model.is_empty())
+            .unwrap_or(status.selected_model.as_str());
         let model_bare = {
             let stripped =
                 crate::ai_selection::strip_provider_prefix(OPENCODE_PROVIDER_ID, model_input);
@@ -314,11 +321,13 @@ impl OpenCodeProvider {
             "database-contatti-classifier",
         ]);
         command
-            .args(["--pure", "--agent", SANDBOX_AGENT])
+            .args(["--agent", SANDBOX_AGENT])
             .env("OPENCODE_CONFIG_CONTENT", SANDBOX_CONFIG)
             .current_dir(std::env::temp_dir());
+        // `opencode run` waits for the end of an open stdin before answering.
         command
             .arg(&message)
+            .stdin(Stdio::null())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
         let mut child = command.spawn().map_err(|error| {

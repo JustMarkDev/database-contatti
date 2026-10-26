@@ -21,7 +21,7 @@ use crate::{SearchRunSummary, open_db};
 use futures::StreamExt;
 use rusqlite::{Connection, params};
 use serde::{Deserialize, Serialize};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
 use tauri::Emitter;
 
@@ -226,6 +226,10 @@ pub(crate) struct SubcategoryCoverage {
     pub(crate) to_verify: i64,
     /// Addresses found on the sites read.
     pub(crate) leads: i64,
+    /// Of those, the ones no contact holds yet.
+    pub(crate) new_leads: i64,
+    /// context.dev credits spent reading these sites.
+    pub(crate) credits: i64,
 }
 
 /// One row per askable subcategory (catch-alls left out), optionally within one region.
@@ -241,7 +245,8 @@ pub(crate) fn subcategory_coverage(
                     COUNT(DISTINCT CASE WHEN d.status='crawled' THEN d.host END),
                     COUNT(DISTINCT CASE WHEN d.status='failed' THEN d.host END),
                     COUNT(DISTINCT CASE WHEN d.status='verifica' THEN d.host END),
-                    coalesce(SUM(CASE WHEN d.status='crawled' THEN d.lead_count END), 0)
+                    coalesce(SUM(CASE WHEN d.status='crawled' THEN d.lead_count END), 0),
+                    coalesce(SUM(d.credits_used), 0)
              FROM subcategories s JOIN categories c ON c.id=s.category_id
              LEFT JOIN search_seeds d ON d.category=c.name AND d.subcategory=s.name
                   AND (?1 IS NULL OR d.regione=?1)
@@ -259,11 +264,40 @@ pub(crate) fn subcategory_coverage(
                 failed: row.get(5)?,
                 to_verify: row.get(6)?,
                 leads: row.get(7)?,
+                new_leads: 0,
+                credits: row.get(8)?,
             })
         })
         .map_err(|error| error.to_string())?
         .collect::<Result<Vec<_>, _>>()
         .map_err(|error| error.to_string())?;
+    let new_leads: std::collections::HashMap<(String, String), i64> = db
+        .prepare(
+            "SELECT l.category, l.subcategory, COUNT(DISTINCT l.email_comparison_key)
+             FROM search_leads l
+             WHERE (?1 IS NULL OR l.regione=?1) AND l.category IS NOT NULL AND l.subcategory IS NOT NULL
+               AND NOT EXISTS(SELECT 1 FROM contacts c
+                              WHERE c.email_comparison_key = l.email_comparison_key COLLATE NOCASE)
+             GROUP BY l.category, l.subcategory",
+        )
+        .and_then(|mut statement| {
+            statement
+                .query_map(params![regione], |row| {
+                    Ok(((row.get(0)?, row.get(1)?), row.get(2)?))
+                })?
+                .collect::<Result<_, _>>()
+        })
+        .map_err(|error| error.to_string())?;
+    let rows: Vec<SubcategoryCoverage> = rows
+        .into_iter()
+        .map(|mut row| {
+            row.new_leads = new_leads
+                .get(&(row.category.clone(), row.subcategory.clone()))
+                .copied()
+                .unwrap_or(0);
+            row
+        })
+        .collect();
     Ok(rows
         .into_iter()
         .filter(|row| crate::lead_ai::is_target_subcategory(&row.category, &row.subcategory))
@@ -507,10 +541,12 @@ pub(crate) struct CrawlJob {
     pub(crate) source_id: Option<String>,
     pub(crate) max_pages: i64,
     pub(crate) max_pdfs: i64,
-    pub(crate) use_ai: bool,
     pub(crate) directory: Option<DirectoryInfo>,
     /// Credits this run may spend at most (0: the settings' per-run cap).
     pub(crate) max_credits: u64,
+    /// OpenCode choice of Settings.
+    pub(crate) ai_model: String,
+    pub(crate) ai_effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -536,6 +572,163 @@ impl Drop for RunningGuard {
     }
 }
 
+/// Name words, lowercase, without the little words that tell nothing apart.
+fn name_tokens(text: &str) -> HashSet<String> {
+    const LITTLE: [&str; 14] = [
+        "del", "della", "dello", "dei", "degli", "delle", "per", "con", "gli", "una", "uno",
+        "alla", "nel", "sul",
+    ];
+    text.to_lowercase()
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|word| word.chars().count() >= 3 && !LITTLE.contains(word))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A site shared by several seeds (a comune with its library, museum and
+/// theatre): an address goes to the seed whose name words, those the other seeds
+/// do not share, appear in the address's organization, office or mailbox name,
+/// and only one seed does. Its taxonomy and place replace the first seed's.
+pub(crate) fn assign_to_seeds(
+    leads: &mut BTreeMap<String, LeadAccumulator>,
+    siblings: &[SeedRow],
+    first: &SeedRow,
+) {
+    if siblings.len() < 2 {
+        return;
+    }
+    let names: Vec<HashSet<String>> = siblings
+        .iter()
+        .map(|seed| {
+            // The subcategory names the kind of body when its name does not ("Palazzo X").
+            name_tokens(&format!(
+                "{} {}",
+                seed.name.as_deref().unwrap_or(""),
+                seed.context.subcategory.as_deref().unwrap_or("")
+            ))
+        })
+        .collect();
+    let distinctive: Vec<HashSet<String>> = names
+        .iter()
+        .map(|own| {
+            own.iter()
+                .filter(|word| names.iter().any(|other| !other.contains(*word)))
+                .cloned()
+                .collect()
+        })
+        .collect();
+    for lead in leads.values_mut() {
+        let local = lead.email().split('@').next().unwrap_or("").to_owned();
+        let mut words = name_tokens(&local);
+        // The first seed's own name was only inherited: it says nothing about the address.
+        let organization = lead
+            .context
+            .organization
+            .as_ref()
+            .filter(|name| Some(*name) != first.name.as_ref());
+        for text in [organization, lead.context.department.as_ref()]
+            .into_iter()
+            .flatten()
+        {
+            words.extend(name_tokens(text));
+        }
+        let scores: Vec<usize> = distinctive
+            .iter()
+            .map(|own| own.intersection(&words).count())
+            .collect();
+        let best = scores.iter().copied().max().unwrap_or(0);
+        if best == 0 || scores.iter().filter(|score| **score == best).count() > 1 {
+            continue;
+        }
+        let Some(index) = scores.iter().position(|score| *score == best) else {
+            continue;
+        };
+        let (seed, context) = (&siblings[index], &mut lead.context);
+        context.organization = seed.name.clone().or(context.organization.take());
+        if seed.context.category.is_some() {
+            context.category = seed.context.category.clone();
+            context.subcategory = seed.context.subcategory.clone();
+        }
+        for (target, value) in [
+            (&mut context.official_code, &seed.context.official_code),
+            (&mut context.address, &seed.context.address),
+            (&mut context.postal_code, &seed.context.postal_code),
+            (&mut context.comune, &seed.context.comune),
+            (&mut context.provincia, &seed.context.provincia),
+            (&mut context.regione, &seed.context.regione),
+        ] {
+            if value.is_some() {
+                target.clone_from(value);
+            }
+        }
+    }
+}
+
+/// The pending seeds of each host, to tell apart the organizations sharing a site.
+async fn host_seeds(app: &tauri::AppHandle, hosts: Vec<String>) -> BTreeMap<String, Vec<SeedRow>> {
+    let app = app.clone();
+    crate::database::blocking(move || {
+        let db = open_db(&app)?;
+        let mut statement = db
+            .prepare(
+                "SELECT name, category, subcategory, comune, provincia, regione, address,
+                        postal_code, official_code FROM search_seeds
+                 WHERE host=?1 AND status='pending' AND coalesce(name,'')<>''
+                 ORDER BY created_at, rowid LIMIT 12",
+            )
+            .map_err(|error| error.to_string())?;
+        let mut found = BTreeMap::new();
+        for host in hosts {
+            let rows: Vec<SeedRow> = statement
+                .query_map(params![host], |row| {
+                    Ok(SeedRow {
+                        url: None,
+                        name: row.get(0)?,
+                        context: LeadContext {
+                            category: row.get(1)?,
+                            subcategory: row.get(2)?,
+                            comune: row.get(3)?,
+                            provincia: row.get(4)?,
+                            regione: row.get(5)?,
+                            address: row.get(6)?,
+                            postal_code: row.get(7)?,
+                            official_code: row.get(8)?,
+                            ..LeadContext::default()
+                        },
+                    })
+                })
+                .map_err(|error| error.to_string())?
+                .filter_map(Result::ok)
+                .collect();
+            if rows.len() > 1 {
+                found.insert(host, rows);
+            }
+        }
+        Ok(found)
+    })
+    .await
+    // A failed lookup only leaves every address with the first seed's context.
+    .unwrap_or_default()
+}
+
+/// Comparison keys among `keys` that already belong to a contact.
+async fn known_keys(app: &tauri::AppHandle, keys: Vec<String>) -> HashSet<String> {
+    let app = app.clone();
+    crate::database::blocking(move || {
+        let db = open_db(&app)?;
+        let mut statement = db
+            .prepare("SELECT 1 FROM contacts WHERE email_comparison_key=?1 LIMIT 1")
+            .map_err(|error| error.to_string())?;
+        Ok(keys
+            .into_iter()
+            .filter(|key| statement.exists(params![key]).unwrap_or(false))
+            .collect())
+    })
+    .await
+    // A failed lookup only costs model requests, never leads.
+    .unwrap_or_default()
+}
+
 /// Leads of one crawled host. Addresses of the site itself (or a webmail box
 /// published on it) inherit the seed's organization, taxonomy and place; in a
 /// directory every address inherits the directory taxonomy. With the model,
@@ -549,6 +742,8 @@ pub(crate) async fn host_leads(
     ai: Option<&LeadAi>,
     geography: &Geography,
     now: &str,
+    known: &HashSet<String>,
+    siblings: &[SeedRow],
 ) -> (Vec<LeadAccumulator>, Vec<SeedRow>, Vec<String>) {
     let mut errors = Vec::new();
     let (mut leads, _) = collect_leads(&crawl.pages, now);
@@ -582,7 +777,11 @@ pub(crate) async fn host_leads(
         })
         .collect();
 
+    let shared = job.directory.is_none();
     let Some(ai) = ai else {
+        if shared {
+            assign_to_seeds(&mut leads, siblings, seed);
+        }
         return (leads.into_values().collect(), outbound, errors);
     };
     let apply_place = |context: &mut LeadContext, comune: Option<&str>| {
@@ -655,8 +854,9 @@ pub(crate) async fn host_leads(
         }
     }
     let hits: Vec<(String, String)> = leads
-        .values()
-        .map(|lead| lead.email().to_lowercase())
+        .iter()
+        .filter(|(key, _)| !known.contains(*key))
+        .map(|(_, lead)| lead.email().to_lowercase())
         .map(|email| {
             let context = contexts.get(&email).cloned().unwrap_or_default();
             (email, context)
@@ -667,30 +867,43 @@ pub(crate) async fn host_leads(
         .await
     {
         Ok(described) => {
+            // An outside vendor's mailbox found on the site is not a lead of the entity.
+            leads.retain(|_, lead| {
+                let domain = lead.email().rsplit('@').next().unwrap_or("").to_lowercase();
+                let foreign = !same_site(&domain, host)
+                    && !crate::ai_typesafe::is_consumer_mail_domain(&domain);
+                !(foreign
+                    && described
+                        .get(&lead.email().to_lowercase())
+                        .is_some_and(|found| found.third_party))
+            });
             for lead in leads.values_mut() {
                 let Some(found) = described.get(&lead.email().to_lowercase()) else {
+                    // Not read by the model (already a contact, or unanswered): the page
+                    // parser's guess at a person is mostly page furniture ("Cookie Policy").
+                    lead.set_described(None, None);
                     continue;
                 };
-                lead.context.fill_from(&LeadContext {
-                    organization: found.organization.clone(),
-                    department: found.department.clone(),
-                    category: found.category.clone(),
-                    subcategory: if lead.context.category.is_none()
-                        || lead.context.category == found.category
-                    {
-                        found.subcategory.clone()
-                    } else {
-                        None
-                    },
-                    ..LeadContext::default()
-                });
+                // The model read the text around the address: where it answers, it
+                // prevails over the seed's context (shared by every address of the site).
+                let context = &mut lead.context;
+                context.organization = found.organization.clone().or(context.organization.take());
+                context.department = found.department.clone().or(context.department.take());
+                if found.category.is_some() {
+                    // Seeds can be wrong too (a provincia seeded as "Comune"): the
+                    // model's pair replaces the seed's, not only its category.
+                    context.category = found.category.clone();
+                    context.subcategory = found.subcategory.clone();
+                }
                 apply_place(&mut lead.context, found.comune.as_deref());
-                lead.set_role(found.role.clone());
-                lead.set_person_name(found.person_name.clone());
+                lead.set_described(found.role.clone(), found.person_name.clone());
                 lead.method.push_str("+ia");
             }
         }
         Err(error) => errors.push(format!("{host}: IA contatti: {error}")),
+    }
+    if shared {
+        assign_to_seeds(&mut leads, siblings, seed);
     }
     (leads.into_values().collect(), outbound, errors)
 }
@@ -726,7 +939,7 @@ pub(crate) async fn crawl_urls(
     let setup_now = now.clone();
     let label = job.label.clone();
     let (kind, source_id) = (job.kind, job.source_id.clone());
-    let use_ai = job.use_ai;
+    let (ai_model, ai_effort) = (job.ai_model.clone(), job.ai_effort.clone());
     let context = open_context(&app, job.max_credits).await?;
     let concurrency = context.concurrency();
 
@@ -743,53 +956,59 @@ pub(crate) async fn crawl_urls(
             },
             "running",
         )?;
-        let taxonomy = if use_ai {
-            crate::lead_ai::load_taxonomy(&db)?
-        } else {
-            Vec::new()
-        };
-        Ok((run_id, Geography::load(&db)?, taxonomy))
+        Ok((
+            run_id,
+            Geography::load(&db)?,
+            crate::lead_ai::load_taxonomy(&db)?,
+        ))
     })
     .await?;
 
-    let ai = if job.use_ai {
-        match LeadAi::new(taxonomy) {
-            Ok(ai) => Some(ai),
-            Err(error) => {
-                let failed_app = app.clone();
-                let failed_run = run_id.clone();
-                let message = format!("IA non disponibile: {error}");
-                let recorded = message.clone();
-                let _ = crate::database::blocking(move || {
-                    finish_run(
-                        &*open_db(&failed_app)?,
-                        &failed_run,
-                        "failed",
-                        0,
-                        0,
-                        &[recorded],
-                    )
-                })
-                .await;
-                return Err(message);
-            }
-        }
+    let siblings = if job.directory.is_none() {
+        host_seeds(&app, hosts.keys().cloned().collect()).await
     } else {
-        None
+        BTreeMap::new()
+    };
+    let ai = match LeadAi::new(taxonomy, &ai_model, ai_effort.as_deref()) {
+        Ok(ai) => ai,
+        Err(error) => {
+            let failed_app = app.clone();
+            let failed_run = run_id.clone();
+            let message = format!("IA non disponibile: {error}");
+            let recorded = message.clone();
+            let _ = crate::database::blocking(move || {
+                finish_run(
+                    &*open_db(&failed_app)?,
+                    &failed_run,
+                    "failed",
+                    0,
+                    0,
+                    &[recorded],
+                )
+            })
+            .await;
+            return Err(message);
+        }
     };
     let settings = CrawlSettings {
         context: &context,
         max_pages: job.max_pages.max(1) as usize,
+        map_always: false,
+        extend_to: if job.directory.is_some() {
+            0
+        } else {
+            crate::discovery::EXTEND_UP_TO_PAGES
+        },
         max_pdfs: job.max_pdfs.max(0) as usize,
         directory: job.directory.is_some(),
-        ai: ai.as_ref(),
+        ai: Some(&ai),
         cancel: &CANCEL,
     };
 
     let mut stream = futures::stream::iter(hosts)
         .map(|(host, (urls, seed))| {
-            let (settings, job, ai, geography, now) =
-                (&settings, &job, ai.as_ref(), &geography, &now);
+            let (settings, job, ai, geography, now, app, siblings) =
+                (&settings, &job, &ai, &geography, &now, &app, &siblings);
             async move {
                 if CANCEL.load(Ordering::Relaxed) || settings.context.stop_reason().is_some() {
                     return (
@@ -803,12 +1022,27 @@ pub(crate) async fn crawl_urls(
                 }
                 let crawl = crawl_host(settings, &urls, seed.context.category.as_deref()).await;
                 let site = crawl.site_host.clone().unwrap_or_else(|| host.clone());
-                let (leads, outbound, errors) =
-                    host_leads(&crawl, &site, &seed, job, ai, geography, now).await;
+                // Addresses the database already holds are not worth a model request.
+                let keys: Vec<String> = collect_leads(&crawl.pages, now).0.into_keys().collect();
+                let known = known_keys(app, keys).await;
+                let shared = siblings.get(&host).map_or(&[][..], Vec::as_slice);
+                let (leads, outbound, errors) = host_leads(
+                    &crawl,
+                    &site,
+                    &seed,
+                    job,
+                    Some(ai),
+                    geography,
+                    now,
+                    &known,
+                    shared,
+                )
+                .await;
                 (host, crawl, leads, outbound, errors, false)
             }
         })
-        .buffer_unordered(concurrency);
+        // Hosts waiting for the model do not hold a context.dev slot: a few more may be in flight.
+        .buffer_unordered(concurrency + crate::lead_ai::MODEL_CONCURRENCY);
 
     let mut done = 0usize;
     let mut page_count = 0i64;
@@ -980,6 +1214,8 @@ pub(crate) async fn list_lead_taxonomy(
 pub(crate) async fn plan_lead_request(
     app: tauri::AppHandle,
     request: String,
+    ai_model: Option<String>,
+    ai_effort: Option<String>,
 ) -> Result<crate::lead_ai::LeadPlan, String> {
     let request = request.trim().to_owned();
     if request.is_empty() {
@@ -989,7 +1225,12 @@ pub(crate) async fn plan_lead_request(
         crate::lead_ai::load_taxonomy(&*open_db(&app)?).map(crate::lead_ai::target_taxonomy)
     })
     .await?;
-    let ai = LeadAi::new(taxonomy).map_err(|error| format!("IA non disponibile: {error}"))?;
+    let ai = LeadAi::new(
+        taxonomy,
+        ai_model.as_deref().unwrap_or(""),
+        ai_effort.as_deref(),
+    )
+    .map_err(|error| format!("IA non disponibile: {error}"))?;
     let sources: Vec<_> = DIRECTORIES
         .iter()
         .map(|entry| (entry.id, entry.name, entry.note))
@@ -1117,9 +1358,11 @@ pub(crate) struct ExploreRequest {
     pub(crate) limit: usize,
     pub(crate) max_pages: i64,
     pub(crate) max_pdfs: i64,
-    pub(crate) use_ai: bool,
     /// Credits the run may spend at most (0: the settings' per-run cap).
     pub(crate) max_credits: u64,
+    /// OpenCode choice of Settings; empty model: the one Settings shows.
+    pub(crate) ai_model: Option<String>,
+    pub(crate) ai_effort: Option<String>,
 }
 
 impl Default for ExploreRequest {
@@ -1132,8 +1375,9 @@ impl Default for ExploreRequest {
             limit: 50,
             max_pages: crate::discovery::DEFAULT_MAX_PAGES_PER_DOMAIN,
             max_pdfs: crate::discovery::DEFAULT_MAX_PDFS,
-            use_ai: false,
             max_credits: 0,
+            ai_model: None,
+            ai_effort: None,
         }
     }
 }
@@ -1240,9 +1484,10 @@ pub(crate) async fn explore_seeds(
             source_id: None,
             max_pages,
             max_pdfs,
-            use_ai: request.use_ai,
             directory: None,
             max_credits: request.max_credits,
+            ai_model: request.ai_model.unwrap_or_default(),
+            ai_effort: request.ai_effort,
         },
         seeds,
     )
@@ -1258,8 +1503,9 @@ pub(crate) struct DirectoryRequest {
     pub(crate) category: Option<String>,
     pub(crate) subcategory: Option<String>,
     pub(crate) max_pages: Option<usize>,
-    pub(crate) use_ai: bool,
     pub(crate) max_credits: u64,
+    pub(crate) ai_model: Option<String>,
+    pub(crate) ai_effort: Option<String>,
 }
 
 /// Crawl a directory (catalog entry or pasted URL): its emails become leads
@@ -1311,8 +1557,9 @@ pub(crate) async fn explore_directory(
                 .unwrap_or(60)
                 .clamp(1, MAX_DIRECTORY_PAGES) as i64,
             max_pdfs: 0,
-            use_ai: request.use_ai,
             max_credits: request.max_credits,
+            ai_model: request.ai_model.unwrap_or_default(),
+            ai_effort: request.ai_effort,
             directory: Some(DirectoryInfo {
                 list_name: format!("Elenco: {name}"),
                 category: category.clone(),
@@ -1428,17 +1675,67 @@ mod tests {
             },
         };
         // Two lists share a host: one site. One site is read, one waits.
-        insert_seeds(&db, "Base: Infanzia", &[seed("https://a.test", "Lombardia")], now).unwrap();
+        insert_seeds(
+            &db,
+            "Base: Infanzia",
+            &[seed("https://a.test", "Lombardia")],
+            now,
+        )
+        .unwrap();
         insert_seeds(&db, "Altro", &[seed("https://a.test", "Lombardia")], now).unwrap();
-        insert_seeds(&db, "Base: Infanzia", &[seed("https://b.test", "Veneto")], now).unwrap();
+        insert_seeds(
+            &db,
+            "Base: Infanzia",
+            &[seed("https://b.test", "Veneto")],
+            now,
+        )
+        .unwrap();
         mark_host(&db, "a.test", "crawled", 7, None, now).unwrap();
+        add_host_credits(&db, "a.test", 12).unwrap();
+        // Two addresses found on the sites of the subcategory: one is already a contact.
+        let run = create_run(
+            &db,
+            &RunRecord {
+                kind: "crawl",
+                query_text: "test",
+                source_id: None,
+                seed_count: 1,
+                now,
+            },
+            "completed",
+        )
+        .unwrap();
+        for email in ["nuovo@a.test", "noto@a.test"] {
+            db.execute(
+                "INSERT INTO search_leads(id,run_id,email,email_comparison_key,retrieved_at,
+                    category,subcategory,regione) VALUES(?1,?2,?3,?3,?4,'Istruzione','Infanzia','Lombardia')",
+                params![uuid::Uuid::new_v4().to_string(), run, email, now],
+            )
+            .unwrap();
+        }
+        db.execute(
+            "INSERT INTO contacts(id,email,email_local_part,email_domain,email_tld,status,
+                validation_notes,source_file,category,paese,email_comparison_key,is_pec)
+             VALUES('c1','noto@a.test','noto','a','.test','valid','[]','t.csv','Istruzione','Italia','noto@a.test',0)",
+            [],
+        )
+        .unwrap();
+        let infanzia = subcategory_coverage(&db, None)
+            .unwrap()
+            .into_iter()
+            .find(|row| row.subcategory == "Infanzia")
+            .unwrap();
+        assert_eq!((infanzia.credits, infanzia.new_leads), (12, 1));
 
         let find = |rows: &[SubcategoryCoverage]| {
             rows.iter()
                 .find(|row| row.subcategory == "Infanzia")
                 .map(|row| (row.sites, row.pending, row.crawled, row.leads))
         };
-        assert_eq!(find(&subcategory_coverage(&db, None).unwrap()), Some((2, 1, 1, 14)));
+        assert_eq!(
+            find(&subcategory_coverage(&db, None).unwrap()),
+            Some((2, 1, 1, 14))
+        );
         assert_eq!(
             find(&subcategory_coverage(&db, Some("Veneto")).unwrap()),
             Some((1, 1, 0, 0))
@@ -1643,6 +1940,221 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn lead_crawl_model_answers_prevail_over_the_seed_and_drop_vendor_addresses() {
+        use crate::ai_provider::testing::ScriptedProvider;
+        let db = Connection::open_in_memory().unwrap();
+        setup_schema(&db).unwrap();
+        let geography = Geography::load(&db).unwrap();
+        let crawl = HostCrawl {
+            pages: vec![FetchedPage {
+                url: "https://www.comune.example.test/contatti".to_owned(),
+                html: "<p>Cookie Policy sindaco@comune.example.test</p>\
+                       <p>DPO esterno dpo@fornitore.example.test</p>"
+                    .to_owned(),
+                via: "archivio",
+            }],
+            ..HostCrawl::default()
+        };
+        // The seed is the library of the same comune: it must not label the mayor's address.
+        let seed = SeedRow {
+            url: Some("https://www.comune.example.test".to_owned()),
+            name: Some("Biblioteca civica".to_owned()),
+            context: LeadContext {
+                category: Some("Cultura".to_owned()),
+                subcategory: Some("Biblioteca".to_owned()),
+                ..LeadContext::default()
+            },
+        };
+        let job = CrawlJob {
+            label: "test".to_owned(),
+            kind: "crawl",
+            source_id: None,
+            max_pages: 5,
+            max_pdfs: 0,
+            directory: None,
+            max_credits: 0,
+            ai_model: String::new(),
+            ai_effort: None,
+        };
+        let answer = serde_json::json!({"contacts": [
+            {"email": "sindaco@comune.example.test", "organization": "Comune di Esempio",
+             "role": "Sindaco", "person_name": null, "category": "Pubblica amministrazione",
+             "subcategory": "Comune", "third_party": false},
+            {"email": "dpo@fornitore.example.test", "organization": "Fornitore", "third_party": true},
+        ]});
+        let taxonomy = vec![(
+            "Pubblica amministrazione".to_owned(),
+            vec!["Comune".to_owned()],
+        )];
+        let ai = LeadAi::with_provider(
+            std::sync::Arc::new(ScriptedProvider::new(vec![Ok(answer.to_string())])),
+            taxonomy,
+        );
+        let (leads, _, errors) = host_leads(
+            &crawl,
+            "www.comune.example.test",
+            &seed,
+            &job,
+            Some(&ai),
+            &geography,
+            "2026-09-29T10:00:00Z",
+            &HashSet::new(),
+            &[],
+        )
+        .await;
+        assert!(errors.is_empty(), "{errors:?}");
+        assert_eq!(leads.len(), 1, "the vendor's address is dropped");
+        let mayor = &leads[0];
+        assert_eq!(mayor.email(), "sindaco@comune.example.test");
+        assert_eq!(
+            mayor.context.organization.as_deref(),
+            Some("Comune di Esempio")
+        );
+        assert_eq!(
+            mayor.context.category.as_deref(),
+            Some("Pubblica amministrazione")
+        );
+        assert_eq!(mayor.context.subcategory.as_deref(), Some("Comune"));
+        assert_eq!(
+            mayor.role_and_person(),
+            (Some("Sindaco"), None),
+            "\"Cookie Policy\" is not a person"
+        );
+    }
+
+    #[tokio::test]
+    async fn lead_crawl_an_address_goes_to_the_seed_it_names_on_a_shared_site() {
+        let db = Connection::open_in_memory().unwrap();
+        setup_schema(&db).unwrap();
+        let geography = Geography::load(&db).unwrap();
+        let crawl = HostCrawl {
+            pages: vec![FetchedPage {
+                url: "https://www.comune.example.test/contatti".to_owned(),
+                html: "<p>biblioteca@comune.example.test</p>\
+                       <p>ufficio.turistico@comune.example.test</p>\
+                       <p>info@comune.example.test</p>"
+                    .to_owned(),
+                via: "archivio",
+            }],
+            ..HostCrawl::default()
+        };
+        let seed = |name: &str, category: &str, subcategory: &str, code: &str| SeedRow {
+            url: None,
+            name: Some(name.to_owned()),
+            context: LeadContext {
+                category: Some(category.to_owned()),
+                subcategory: Some(subcategory.to_owned()),
+                official_code: Some(code.to_owned()),
+                ..LeadContext::default()
+            },
+        };
+        let siblings = vec![
+            seed(
+                "Comune di Esempio",
+                "Pubblica amministrazione",
+                "Comune",
+                "C1",
+            ),
+            seed(
+                "Biblioteca civica Gigi Monticone",
+                "Cultura",
+                "Biblioteca",
+                "B1",
+            ),
+            seed(
+                "Ufficio turistico Esempio",
+                "Turismo e promozione territoriale",
+                "Ufficio turistico",
+                "T1",
+            ),
+        ];
+        let job = CrawlJob {
+            label: "test".to_owned(),
+            kind: "crawl",
+            source_id: None,
+            max_pages: 5,
+            max_pdfs: 0,
+            directory: None,
+            max_credits: 0,
+            ai_model: String::new(),
+            ai_effort: None,
+        };
+        let (leads, _, errors) = host_leads(
+            &crawl,
+            "www.comune.example.test",
+            &siblings[0],
+            &job,
+            None,
+            &geography,
+            "2026-09-29T10:00:00Z",
+            &HashSet::new(),
+            &siblings,
+        )
+        .await;
+        assert!(errors.is_empty(), "{errors:?}");
+        let by_email: HashMap<&str, &LeadAccumulator> =
+            leads.iter().map(|lead| (lead.email(), lead)).collect();
+        let library = &by_email["biblioteca@comune.example.test"].context;
+        assert_eq!(library.subcategory.as_deref(), Some("Biblioteca"));
+        assert_eq!(library.official_code.as_deref(), Some("B1"));
+        assert_eq!(
+            library.organization.as_deref(),
+            Some("Biblioteca civica Gigi Monticone")
+        );
+        let tourism = &by_email["ufficio.turistico@comune.example.test"].context;
+        assert_eq!(tourism.subcategory.as_deref(), Some("Ufficio turistico"));
+        // Names nothing in particular: it stays with the first seed, the comune.
+        let general = &by_email["info@comune.example.test"].context;
+        assert_eq!(general.subcategory.as_deref(), Some("Comune"));
+        assert_eq!(general.official_code.as_deref(), Some("C1"));
+    }
+
+    #[tokio::test]
+    async fn lead_crawl_known_addresses_are_not_sent_to_the_model() {
+        use crate::ai_provider::testing::ScriptedProvider;
+        let db = Connection::open_in_memory().unwrap();
+        setup_schema(&db).unwrap();
+        let geography = Geography::load(&db).unwrap();
+        let crawl = HostCrawl {
+            pages: vec![FetchedPage {
+                url: "https://www.comune.example.test/contatti".to_owned(),
+                html: "<p>Sindaco sindaco@comune.example.test</p>".to_owned(),
+                via: "archivio",
+            }],
+            ..HostCrawl::default()
+        };
+        let seed = SeedRow::default();
+        let job = CrawlJob {
+            label: "test".to_owned(),
+            kind: "crawl",
+            source_id: None,
+            max_pages: 5,
+            max_pdfs: 0,
+            directory: None,
+            max_credits: 0,
+            ai_model: String::new(),
+            ai_effort: None,
+        };
+        let provider = std::sync::Arc::new(ScriptedProvider::new(Vec::new()));
+        let ai = LeadAi::with_provider(provider.clone(), Vec::new());
+        let known = HashSet::from(["sindaco@comune.example.test".to_owned()]);
+        let (leads, _, errors) = host_leads(
+            &crawl,
+            "www.comune.example.test",
+            &seed,
+            &job,
+            Some(&ai),
+            &geography,
+            "2026-09-29T10:00:00Z",
+            &known,
+            &[],
+        )
+        .await;
+        assert_eq!((leads.len(), provider.request_count()), (1, 0));
+        assert!(errors.is_empty(), "{errors:?}");
+    }
+
+    #[tokio::test]
     async fn lead_crawl_site_addresses_inherit_the_seed_context() {
         let db = Connection::open_in_memory().unwrap();
         setup_schema(&db).unwrap();
@@ -1674,9 +2186,10 @@ mod tests {
             source_id: None,
             max_pages: 5,
             max_pdfs: 0,
-            use_ai: false,
             directory: None,
             max_credits: 0,
+            ai_model: String::new(),
+            ai_effort: None,
         };
         let (leads, outbound, errors) = host_leads(
             &crawl,
@@ -1686,6 +2199,8 @@ mod tests {
             None,
             &geography,
             "2026-09-29T10:00:00Z",
+            &HashSet::new(),
+            &[],
         )
         .await;
         assert!(outbound.is_empty() && errors.is_empty());

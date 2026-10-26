@@ -90,8 +90,6 @@ const REGIONI = [
   "Valle d'Aosta",
   "Veneto",
 ];
-/** Every crawl reads pages with the IA: it is what finds roles, offices and places. */
-const USE_AI = true;
 
 /** Working columns of the lead table; everything else is in the detail sheet. */
 export const LEAD_COLUMNS = [
@@ -508,7 +506,6 @@ export function SearchPage({
         limit,
         maxPages: pagesPerSite,
         maxPdfs: schoolPdfs,
-        useAi: USE_AI,
       });
     } catch (error) {
       if (String(error).includes("Nessun sito")) return null;
@@ -528,7 +525,7 @@ export function SearchPage({
         : MAX_SITES_PER_RUN;
     const confirmed = await confirmDialog({
       title: `Leggere i siti: ${target.subcategory}?`,
-      description: `≈ ${current.pending.toLocaleString("it-IT")} siti, al massimo ≈ ${(current.pending * perSite).toLocaleString("it-IT")} crediti context.dev (Map + ${pagesPerSite} pagine per sito). La lettura va avanti a lotti finché i siti finiscono; si ferma prima se premi Ferma o i crediti scendono alla riserva. I siti letti da meno di 30 giorni non si rileggono.`,
+      description: `≈ ${current.pending.toLocaleString("it-IT")} siti, ≈ ${(current.pending * perSite).toLocaleString("it-IT")} crediti context.dev di norma (home + ${pagesPerSite - 1} pagine per sito; di più, fino a 10 pagine, sui siti che continuano a dare indirizzi nuovi). La lettura va avanti a lotti finché i siti finiscono; si ferma prima se premi Ferma o i crediti scendono alla riserva. I siti letti da meno di 30 giorni non si rileggono.`,
       actionLabel: "Leggi",
     });
     if (!confirmed) return;
@@ -585,7 +582,7 @@ export function SearchPage({
       };
       for (const entry of entries) {
         await attempt(entry.name, async () => {
-          await exploreDirectory({ sourceId: entry.id, useAi: USE_AI });
+          await exploreDirectory({ sourceId: entry.id });
           return 0;
         });
       }
@@ -791,6 +788,14 @@ export function SearchPage({
             {current.crawled.toLocaleString("it-IT")} letti ·{" "}
             {current.pending.toLocaleString("it-IT")} da leggere ·{" "}
             {current.leads.toLocaleString("it-IT")} indirizzi trovati
+            {current.leads ? ` (${current.new_leads.toLocaleString("it-IT")} nuovi)` : ""}
+            {current.credits
+              ? ` · ${current.credits.toLocaleString("it-IT")} crediti${
+                  current.new_leads
+                    ? ` (${(current.credits / current.new_leads).toLocaleString("it-IT", { maximumFractionDigits: 1 })} per indirizzo nuovo)`
+                    : ""
+                }`
+              : ""}
             {current.failed ? ` · ${current.failed.toLocaleString("it-IT")} non raggiungibili` : ""}
             {current.to_verify
               ? ` · ${current.to_verify.toLocaleString("it-IT")} da verificare`

@@ -497,7 +497,9 @@ function ContextdevCard({ active }: { active: boolean }) {
                 <summary>Impostazioni avanzate</summary>
                 <div className="grid gap-3 sm:grid-cols-2">
                   <label className="flex flex-col gap-1 text-sm">
-                    Pagine per sito (1 credito ciascuna, più 1 per la mappa del sito)
+                    Pagine per sito (1 credito ciascuna; se continuano a dare indirizzi nuovi se ne
+                    leggono altre, fino a 10; la mappa del sito, +1, solo se la home non offre link
+                    utili)
                     <Select
                       value={String(explore.pagesPerSite)}
                       onValueChange={(value) =>

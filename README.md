@@ -28,8 +28,9 @@ Nella pagina **Cerca lead** i siti si leggono e si trovano con
 i domini dei siti da mappare e il testo delle ricerche web e Google Maps, **mai**
 il database contatti. Si ritiene che context.dev rispetti `robots.txt`, ma non è
 documentato; usa un proprio user-agent, non quello dell'app. Il DPA di
-context.dev va accettato dal titolare. Con **Usa IA** i link di una pagina e il
-testo vicino agli indirizzi trovati vanno a OpenCode Muse Spark 1.3, eseguito
+context.dev va accettato dal titolare. Il testo vicino agli indirizzi trovati (non
+ancora presenti nel database) e, solo se il punteggio locale non trova pagine, i
+link di una pagina vanno al modello OpenCode scelto nelle Impostazioni, eseguito
 senza strumenti né permessi: il testo dei siti non può fargli leggere file o
 aprire URL. La classificazione dei siti nuovi invia titolo, descrizione e
 indirizzo del sito a TypeSafe Jev. I domini dei contatti diventano siti da
@@ -402,17 +403,26 @@ seguendo le sue pagine sotto il percorso di partenza (e la paginazione): le
 email diventano lead con la categoria dell'elenco, i link ad altri siti
 diventano candidati.
 
-**Come si legge un sito** (context.dev): la home (1 credito), la mappa del
-sito dal sitemap (Map, 1 credito), poi le pagine migliori secondo un punteggio
+**Come si legge un sito** (context.dev): la home (1 credito), poi le pagine migliori secondo un punteggio
 locale gratuito per la categoria del sito (parole come `parroco`, `direttivo`,
 `referente bullismo` nell'indirizzo, nel titolo o nel testo del link), fino a
 **Pagine per sito** (3 per impostazione, al massimo 6, la home compresa). Per i
-siti delle scuole si possono leggere fino a 2 PDF di circolari con ruoli. Con
-**Usa IA** il modello sceglie per significato tra i primi candidati e le sue
-scelte passano davanti. Un sito costa quindi al massimo Map + pagine (4 crediti
-con 3 pagine); un sito morto o bloccato al massimo 1. Notizie, calendari, albo,
+siti delle scuole si possono leggere fino a 2 PDF di circolari con ruoli. Se
+nessuna pagina ha un punteggio positivo, il modello sceglie per significato tra i
+primi candidati. La mappa del sito (Map, 1 credito) si usa solo se i link
+della home non offrono nessuna pagina con punteggio positivo. Oltre
+le pagine richieste un sito prosegue (fino a 10 pagine) finché l'ultima pagina
+letta ha dato un indirizzo nuovo. Un sito costa quindi di norma home + pagine
+(3 crediti con 3 pagine), +1 se serve Map, di più sui siti che continuano a rendere; un sito morto o bloccato al massimo 1. Notizie, calendari, albo,
 privacy, login, feed e paginazione non si leggono mai. Gli indirizzi offuscati
-da Cloudflare vengono decodificati.
+da Cloudflare vengono decodificati. I siti sono salvati con `https://`: se non
+rispondono, la home si riprova una volta con `http://` (molti siti piccoli
+rispondono solo così o rimandano al loro dominio). Quando un sito è condiviso da
+più enti (un comune con biblioteca, museo e teatro), un indirizzo che nomina uno
+di loro (`biblioteca@…`, o l'ufficio letto dal modello) prende ente, categoria e
+località di quel seed; gli altri restano con il primo. Il riquadro
+del tipo di ente scelto in **Cerca lead** mostra siti letti, indirizzi nuovi,
+crediti spesi e crediti per indirizzo nuovo.
 
 **Siti nuovi.** Tutti i canali passano dallo stesso filtro: si scartano i siti
 già noti (in qualunque lista, sito di un contatto o dominio email di un
@@ -455,9 +465,11 @@ context.dev.
 
 Un sito letto non viene riletto per 30 giorni, anche da un altro elenco. Gli
 indirizzi del sito stesso (o una casella webmail pubblicata sul sito)
-ereditano ente, categoria e località del sito; con **Usa IA** il modello legge
-ufficio, ruolo, persona, comune e categoria dal testo vicino a ogni indirizzo,
-e negli elenchi il nome e il comune di ogni ente. Le risposte del modello sono
+ereditano ente, categoria e località del sito; il modello legge ufficio, ruolo,
+persona, comune e categoria dal testo vicino a ogni indirizzo (e le sue risposte
+prevalgono su quelle del sito), scarta gli indirizzi di fornitori esterni e,
+negli elenchi, legge il nome e il comune di ogni ente. Le richieste al modello
+sono al massimo 2 in parallelo e i siti in attesa viaggiano nella stessa chiamata. Le risposte del modello sono
 accettate solo se riguardano link e indirizzi presenti nella pagina e voci
 della tassonomia. I lead di ogni sito sono salvati appena il sito è finito:
 **Ferma esplorazione** conserva quelli già trovati.
