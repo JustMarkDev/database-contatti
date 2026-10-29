@@ -27,36 +27,15 @@ import { resolveWindowChrome, usesMacOverlayTitlebar } from "./lib/windowChrome"
 import { cn } from "./lib/utils";
 import type { ExportReport, Page } from "./types";
 
-/**
- * Unfinished pages: real page in dev, "Lavori in corso" in release builds.
- * `import.meta.env.DEV` is a build-time constant, so the dead branch (and the page's
- * chunk) is dropped from `tauri build`; remove the gate once a page is ready.
- */
-function workInProgress(title: string) {
-  return function WorkInProgress({ active }: { active: boolean }) {
-    if (!active) return null;
-    return (
-      <section className="content-island" aria-label={title}>
-        <div className="wip-notice" role="status">
-          <h1>Lavori in corso</h1>
-          <p>{title} non è ancora disponibile.</p>
-        </div>
-      </section>
-    );
-  };
-}
-
 const AiPage = lazy(async () => ({
   default: (await import("./pages/AiPage")).AiPage,
 }));
 const BlacklistPage = lazy(async () => ({
   default: (await import("./pages/BlacklistPage")).BlacklistPage,
 }));
-const SearchPage = import.meta.env.DEV
-  ? lazy(async () => ({
-      default: (await import("./pages/SearchPage")).SearchPage,
-    }))
-  : workInProgress("Cerca lead");
+const SearchPage = lazy(async () => ({
+  default: (await import("./pages/SearchPage")).SearchPage,
+}));
 const SettingsPage = lazy(async () => ({
   default: (await import("./pages/SettingsPage")).SettingsPage,
 }));

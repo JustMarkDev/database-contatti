@@ -42,5 +42,13 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEYzMUNEQzBBMDI3NTM3OTIKUldTU04zVUNDdHdjODlwbm5GbEc2WjlMR2t4VGV4R3hYYUEyOXNsNUxuVTE4bkEwckdlMk9TN2gK",
+      "endpoints": [
+        "https://github.com/JustMarkDev/database-contatti/releases/latest/download/latest.json"
+      ]
+    }
   }
 }
