@@ -827,12 +827,19 @@ mod tests_features;
 mod tests_performance;
 #[cfg(test)]
 mod tests_schema;
+#[cfg(windows)]
+mod updater;
 
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_dialog::init());
+    #[cfg(windows)]
+    let builder = builder.plugin(tauri_plugin_updater::Builder::new().build());
+    builder
         .setup(|app| {
+            #[cfg(windows)]
+            updater::start(app.handle().clone());
             let handle = app.handle().clone();
             std::thread::spawn(move || {
                 if let Err(error) = open_db(&handle) {

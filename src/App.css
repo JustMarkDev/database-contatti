@@ -379,24 +379,6 @@
     color: var(--muted);
     font-size: 0.8125rem;
   }
-  .wip-notice {
-    display: grid;
-    flex: 1;
-    place-content: center;
-    gap: 12px;
-    padding: var(--space-4) 20px;
-    text-align: center;
-  }
-  .wip-notice h1 {
-    font-size: clamp(2.5rem, 7vw, 5rem);
-    font-weight: 700;
-    letter-spacing: -0.03em;
-    line-height: 1;
-  }
-  .wip-notice p {
-    color: var(--muted);
-    font-size: 1rem;
-  }
 
   /* ----------------------------------------------------------- page chrome */
   .topbar {

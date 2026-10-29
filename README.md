@@ -37,6 +37,10 @@ indirizzo del sito a TypeSafe Jev. I domini dei contatti diventano siti da
 leggere solo quando lo chiedi con **Aggiungi dai contatti**.
 La validazione dei domini esegue invece richieste DNS, che possono essere
 visibili al resolver DNS configurato sul sistema.
+Su Windows le build di release controllano all'avvio, su GitHub Releases, se
+esiste una versione più recente (`latest.json`); se l'installer ha una firma
+valida lo installano e riavviano l'app. La richiesta non contiene il database né
+dati dei contatti. Su macOS non c'è aggiornamento automatico.
 
 I file sorgente possono contenere dati personali. Il corpus di compatibilità
 contiene contatti reali e non fa parte di questo repository: i manutentori lo
@@ -203,6 +207,14 @@ repository: `release.yml` la imposta nei file dell'app (`package.json`,
 valori committati possono essere più vecchi dell'ultimo tag. Se una build
 fallisce dopo la creazione del tag, rilanciare **Release** da _Actions → Run
 workflow_ indicando il tag esistente.
+
+Gli installer Windows sono firmati per l'aggiornamento automatico con una chiave
+minisign: la chiave pubblica è in `src-tauri/tauri.conf.json`, quella privata è
+il secret `TAURI_SIGNING_PRIVATE_KEY` del repository. Non è una firma di codice
+Windows. `release.yml` pubblica `latest.json` e i file `.sig` insieme agli
+installer. Chi perde la chiave privata non può più firmare aggiornamenti: le
+installazioni esistenti andrebbero reinstallate a mano con una nuova chiave
+pubblica.
 
 ## Posizione del database e backup
 
