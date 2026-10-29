@@ -280,7 +280,10 @@ pub(crate) async fn accept_candidates(
         });
     }
     let list_name = list_name.to_owned();
-    let (accepted, to_verify) = (std::sync::Arc::new(accepted), std::sync::Arc::new(to_verify));
+    let (accepted, to_verify) = (
+        std::sync::Arc::new(accepted),
+        std::sync::Arc::new(to_verify),
+    );
     let (inserted, held) = crate::database::blocking_patient({
         let app = app.clone();
         move || {
