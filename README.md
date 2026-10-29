@@ -186,11 +186,23 @@ GTK/WebKitGTK possono restare nel lockfile risolto da Tauri, ma non appartengono
 ai target distribuiti e non vengono presentate come avvisi “consentiti”.
 
 Le pull request eseguono controlli condizionali per le aree frontend e native,
-seguiti da un unico gate finale stabile. I tag Git nel formato `v*` avviano la
-verifica, l'audit e la compilazione degli installer Windows MSI e NSIS e dei
-pacchetti macOS. Gli artefatti vengono pubblicati in una GitHub Release con
-note generate automaticamente; non avviene alcuna pubblicazione su registri
-di pacchetti.
+seguiti da un unico gate finale stabile.
+
+Le release sono automatiche. A ogni push su `main` il workflow _Semantic
+release_ legge i titoli delle PR (Conventional Commits, già imposti dal
+controllo del titolo): `fix`/`perf` alzano la patch, `feat` la minor, un `!`
+dopo il tipo o un `BREAKING CHANGE:` nel corpo la major; gli altri tipi non
+producono una release. Crea il tag `vX.Y.Z` e una bozza di GitHub Release con le
+note, poi `release.yml` esegue verifica, audit e compilazione degli installer
+Windows MSI e NSIS e dei pacchetti macOS, carica gli artefatti e pubblica la
+bozza. Non avviene alcuna pubblicazione su registri di pacchetti.
+
+Il branch `main` è protetto, quindi la versione non viene riscritta nel
+repository: `release.yml` la imposta nei file dell'app (`package.json`,
+`Cargo.toml`, `Cargo.lock`, `tauri.conf.json`) solo durante la build, quindi i
+valori committati possono essere più vecchi dell'ultimo tag. Se una build
+fallisce dopo la creazione del tag, rilanciare **Release** da _Actions → Run
+workflow_ indicando il tag esistente.
 
 ## Posizione del database e backup
 

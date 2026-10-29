@@ -234,7 +234,7 @@ async fn contextdev_live_crawl_check() {
                 let host = url_host(&url).unwrap();
                 let crawl = if settings.context.stop_reason().is_none() {
                     let category = seed.context.category.clone();
-                    crawl_host(settings, &[url.clone()], category.as_deref()).await
+                    crawl_host(settings, std::slice::from_ref(&url), category.as_deref()).await
                 } else {
                     HostCrawl::default()
                 };
@@ -565,7 +565,7 @@ async fn contextdev_live_page_depth() {
             let now = &now;
             async move {
                 let crawl = if settings.context.stop_reason().is_none() {
-                    crawl_host(settings, &[url.clone()], category.as_deref()).await
+                    crawl_host(settings, std::slice::from_ref(&url), category.as_deref()).await
                 } else {
                     HostCrawl::default()
                 };

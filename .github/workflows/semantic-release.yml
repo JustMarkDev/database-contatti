@@ -1,0 +1,51 @@
+name: Semantic release
+
+# Squash-merged PR titles are conventional commits (see pr-title.yml). This
+# computes the next version from them, then tags it and drafts the GitHub
+# release. Main is protected, so the version is not committed back: release.yml
+# stamps it into the build, then publishes the draft.
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: semantic-release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Tag and draft release
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write
+    outputs:
+      version: ${{ steps.release.outputs.version }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: lts/*
+      # --force: package.json pins bun through devEngines, so npm/npx aborts
+      # with EBADDEVENGINES without it.
+      - name: Run semantic-release
+        id: release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx --force -y -p semantic-release@25.0.9 -p @semantic-release/exec@7.1.0 semantic-release
+
+  release:
+    name: Build and publish v${{ needs.version.outputs.version }}
+    needs: version
+    if: needs.version.outputs.version != ''
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: v${{ needs.version.outputs.version }}
