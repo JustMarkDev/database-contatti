@@ -1,6 +1,6 @@
 [package]
 name = "database-contatti"
-version = "0.1.0"
+version = "1.0.0"
 description = "Local desktop app for importing, classifying, and exporting email contacts"
 edition = "2024"
 # `src/bin/database-contatti-mcp.rs` is a second binary: keep `tauri dev` on the app.

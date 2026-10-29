@@ -1,0 +1,49 @@
+name: Semantic release
+
+# Squash-merged PR titles are conventional commits (see pr-title.yml). This
+# computes the next version from them and tags it. Main is protected, so the
+# version is not committed back: release.yml stamps it into the build.
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: semantic-release
+  cancel-in-progress: false
+
+jobs:
+  version:
+    name: Compute version and tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: write
+    outputs:
+      published: ${{ steps.release.outputs.new_release_published }}
+      tag: ${{ steps.release.outputs.new_release_git_tag }}
+      notes: ${{ steps.release.outputs.new_release_notes }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - id: release
+        uses: cycjimmy/semantic-release-action@ad51787758d9654d5a75150a89a6fa9b3ccef95e # v8.1.4
+        with:
+          semantic_version: 25
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  release:
+    name: Build and publish ${{ needs.version.outputs.tag }}
+    needs: version
+    if: needs.version.outputs.published == 'true'
+    permissions:
+      contents: write
+    uses: ./.github/workflows/release.yml
+    with:
+      tag: ${{ needs.version.outputs.tag }}
+      notes: ${{ needs.version.outputs.notes }}

@@ -188,9 +188,20 @@ ai target distribuiti e non vengono presentate come avvisi “consentiti”.
 Le pull request eseguono controlli condizionali per le aree frontend e native,
 seguiti da un unico gate finale stabile. I tag Git nel formato `v*` avviano la
 verifica, l'audit e la compilazione degli installer Windows MSI e NSIS e dei
-pacchetti macOS. Gli artefatti vengono pubblicati in una GitHub Release con
-note generate automaticamente; non avviene alcuna pubblicazione su registri
-di pacchetti.
+pacchetti macOS. Gli artefatti vengono pubblicati in una GitHub Release; non
+avviene alcuna pubblicazione su registri di pacchetti.
+
+Le release sono automatiche. A ogni push su `main` il workflow _Semantic
+release_ legge i titoli delle PR (Conventional Commits, già imposti dal
+controllo del titolo): `fix`/`perf` alzano la patch, `feat` la minor, un `!`
+dopo il tipo o un `BREAKING CHANGE:` nel corpo la major; gli altri tipi non
+producono una release. Il workflow crea il tag `vX.Y.Z` e avvia la build. Il
+branch `main` è protetto, quindi la versione non viene riscritta nel
+repository: `release.yml` la imposta nei file dell'app (`package.json`,
+`Cargo.toml`, `Cargo.lock`, `tauri.conf.json`) solo durante la build, quindi i
+valori committati possono essere più vecchi dell'ultimo tag. Se una build
+fallisce dopo la creazione del tag, rilanciare **Release** da _Actions → Run
+workflow_ indicando il tag esistente.
 
 ## Posizione del database e backup
 
