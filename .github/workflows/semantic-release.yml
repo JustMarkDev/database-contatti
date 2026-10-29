@@ -1,8 +1,9 @@
 name: Semantic release
 
 # Squash-merged PR titles are conventional commits (see pr-title.yml). This
-# computes the next version from them and tags it. Main is protected, so the
-# version is not committed back: release.yml stamps it into the build.
+# computes the next version from them, then tags it and drafts the GitHub
+# release. Main is protected, so the version is not committed back: release.yml
+# stamps it into the build, then publishes the draft.
 on:
   push:
     branches:
@@ -17,33 +18,34 @@ concurrency:
 
 jobs:
   version:
-    name: Compute version and tag
+    name: Tag and draft release
     runs-on: ubuntu-latest
-    timeout-minutes: 10
+    timeout-minutes: 15
     permissions:
       contents: write
     outputs:
-      published: ${{ steps.release.outputs.new_release_published }}
-      tag: ${{ steps.release.outputs.new_release_git_tag }}
-      notes: ${{ steps.release.outputs.new_release_notes }}
+      version: ${{ steps.release.outputs.version }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      - id: release
-        uses: cycjimmy/semantic-release-action@ad51787758d9654d5a75150a89a6fa9b3ccef95e # v8.1.4
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
-          semantic_version: 25
+          node-version: lts/*
+      # --force: package.json pins bun through devEngines, so npm/npx aborts
+      # with EBADDEVENGINES without it.
+      - name: Run semantic-release
+        id: release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: npx --force -y -p semantic-release@25.0.9 -p @semantic-release/exec@7.1.0 semantic-release
 
   release:
-    name: Build and publish ${{ needs.version.outputs.tag }}
+    name: Build and publish v${{ needs.version.outputs.version }}
     needs: version
-    if: needs.version.outputs.published == 'true'
+    if: needs.version.outputs.version != ''
     permissions:
       contents: write
     uses: ./.github/workflows/release.yml
     with:
-      tag: ${{ needs.version.outputs.tag }}
-      notes: ${{ needs.version.outputs.notes }}
+      tag: v${{ needs.version.outputs.version }}
