@@ -9,7 +9,8 @@
     "tauri": "tauri",
     "build": "vp build",
     "check": "bun run check:js && bun run check:rust",
-    "check:js": "vp check",
+    "check:js": "vp check && bun run typecheck",
+    "typecheck": "bun check --no-script",
     "check:rust": "cargo fmt --manifest-path src-tauri/Cargo.toml --check && bun run lint:rust",
     "lint": "vp lint && bun run lint:rust",
     "lint:rust": "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets --locked -- -D warnings",
@@ -65,7 +66,7 @@
   "devEngines": {
     "packageManager": {
       "name": "bun",
-      "version": "1.4.2",
+      "version": "1.4.4",
       "onFail": "download"
     }
   }

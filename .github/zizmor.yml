@@ -1,0 +1,5 @@
+rules:
+  secrets-inherit:
+    # Release workflows need the signing key and tokens of the caller.
+    ignore:
+      - semantic-release.yml
