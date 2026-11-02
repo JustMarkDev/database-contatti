@@ -73,9 +73,9 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # Intel macOS is not built on PRs (it was the slowest job by far); the release workflow still builds it.
         os:
           - windows-latest
-          - macos-15-intel
           - macos-latest
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
