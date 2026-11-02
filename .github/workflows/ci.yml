@@ -91,11 +91,11 @@ jobs:
       - uses: swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           workspaces: src-tauri
+          # Only main writes the cache; PRs restore it. Saving on every PR run cost 25-40 s per job.
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - uses: taiki-e/install-action@a4d3f3f761dcd95cce1b72cb61cb6d1963438177 # v2.87.30
         with:
           tool: cargo-audit,cargo-nextest
-      - name: Install locked dependencies
-        run: bun install --frozen-lockfile
       - name: Check Rust
         run: bun run check:rust
       - name: Test Rust backend
