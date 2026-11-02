@@ -47,6 +47,11 @@ tauri-plugin-updater = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 
 # Read the optimization guideline for more details: https://tauri.app/concept/size/#cargo-configuration
+# The test suite is CPU-bound (gazetteer and schema fixtures): in an unoptimized build the 342 tests
+# take ~105 s locally and 6-10 min on CI runners; at opt-level 1 the same run takes ~25 s.
+[profile.test]
+opt-level = 1
+
 [profile.release]
 codegen-units = 1
 lto = true

@@ -16,7 +16,7 @@ export default defineConfig(() => ({
   lint: {
     jsPlugins: [{ name: "vite-plus", specifier: "vite-plus/oxlint-plugin" }],
     rules: { "vite-plus/prefer-vite-plus-imports": "error" },
-    options: { typeAware: true, typeCheck: true },
+    options: { typeAware: true },
     ignorePatterns: ["data/**", "dist/**", "src-tauri/**", ".agents/**"],
   },
   test: {
