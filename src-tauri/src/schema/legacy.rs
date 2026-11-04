@@ -65,13 +65,17 @@ pub(crate) fn backup_database(db: &Connection, path: &std::path::Path) -> Result
         .and_then(|name| name.to_str())
         .unwrap_or("contatti.sqlite3");
     let backup_path = path.with_file_name(format!("{file_name}.backup-{timestamp}.sqlite3"));
-    db.backup(rusqlite::MAIN_DB, &backup_path, None)
-        .map_err(|err| {
-            format!(
-                "Backup migrazione non riuscito ({}): {err}",
-                backup_path.display()
-            )
-        })?;
+    db.backup(
+        rusqlite::MAIN_DB,
+        &backup_path,
+        None::<fn(rusqlite::backup::Progress)>,
+    )
+    .map_err(|err| {
+        format!(
+            "Backup migrazione non riuscito ({}): {err}",
+            backup_path.display()
+        )
+    })?;
     Ok(backup_path)
 }
 
