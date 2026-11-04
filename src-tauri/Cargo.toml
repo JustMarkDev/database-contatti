@@ -58,3 +58,9 @@ lto = true
 opt-level = 3
 panic = "abort"
 strip = true
+
+# RUSTSEC-2024-0429: glib 0.18.5 (pulled in by tauri's Linux GTK3 stack) has an
+# unsound VariantStrIter; the fix only exists in glib >= 0.20, which gtk 0.18
+# cannot use. See patches/README.md. Remove once tauri drops gtk3-rs 0.18.
+[patch.crates-io]
+glib = { path = "patches/glib" }
